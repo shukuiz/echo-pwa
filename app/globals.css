@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --fog: 226 224 223;
+  --cream: 250 247 242;
+  --tile: 255 255 255;
+  --ink: 61 57 59;
+  --mute: 134 129 131;
+  --orb: 142 139 140;
+  --line: 229 225 224;
+  --glass: rgba(120, 117, 118, 0.26);
+  --glass-strong: rgba(120, 117, 118, 0.38);
+  color-scheme: light;
+}
+.dark {
+  --fog: 28 27 30;
+  --cream: 38 36 40;
+  --tile: 48 46 50;
+  --ink: 238 234 230;
+  --mute: 160 154 157;
+  --orb: 82 78 83;
+  --line: 62 59 64;
+  --glass: rgba(255, 255, 255, 0.10);
+  --glass-strong: rgba(255, 255, 255, 0.16);
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body {
+  @apply bg-fog text-ink text-body antialiased;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+input, textarea, select { font-size: 16px; }
+
+@layer components {
+  /* iOS 控制中心风格 */
+  .glass { background: var(--glass); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+  .glass-strong { background: var(--glass-strong); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+  .block-white { @apply bg-tile rounded-block shadow-soft; }
+  .orb { @apply bg-orb text-white rounded-full grid place-items-center; }
+  .capsule { @apply rounded-capsule; }
+  .press { @apply transition active:scale-[0.96]; }
+  .field { @apply w-full bg-cream text-ink text-input rounded-2xl px-4 py-3 outline-none border border-line focus:border-sakura; }
+  .btn-primary { @apply bg-rose text-white rounded-capsule px-5 py-2.5 press font-medium; }
+  .btn-ghost { @apply glass rounded-capsule px-5 py-2.5 press; }
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 12px); }
