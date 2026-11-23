@@ -2,12 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { PageShell, Segmented, Toggle } from "@/components/Chrome";
-import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconMoon, IconSun, IconWand } from "@/components/Icons";
+import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconMoon, IconMusic, IconSun, IconWand, IconWifi } from "@/components/Icons";
 import { Hand, useStore } from "@/lib/store";
 import { chatTools } from "@/lib/mock";
 import { api } from "@/lib/api";
 
 type TestState = { status: "idle" | "testing" | "ok" | "fail"; msg?: string };
+
+const OFFICIAL_BASES: Record<string, string> = {
+  openai: "https://api.openai.com/v1",
+  deepseek: "https://api.deepseek.com/v1",
+};
 
 export default function SettingsPage() {
   const { settings, set, theme, toast } = useStore();
@@ -17,6 +22,8 @@ export default function SettingsPage() {
   const [savingKey, setSavingKey] = useState(false);
   const [test, setTest] = useState<TestState>({ status: "idle" });
   const [newModel, setNewModel] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+  const [loadingModels, setLoadingModels] = useState(false);
 
   // 从后端读取已保存的 Key 状态（脱敏）
   useEffect(() => {
@@ -34,6 +41,12 @@ export default function SettingsPage() {
       return next;
     });
     api.saveSettings(p).catch((e) => toast(e.message || "保存失败"));
+  };
+
+  // 接口类型切换：官方接口自动填好地址；自定义则手填
+  const onProviderChange = (v: string) => {
+    if (v === "custom") upd({ provider: v });
+    else upd({ provider: v, proxyUrl: OFFICIAL_BASES[v] });
   };
 
   // 保存 API Key：只写后端，前端不落任何 Key
@@ -64,7 +77,27 @@ export default function SettingsPage() {
     }
   }
 
+  // 拉取模型列表：走后端 /models，支持搜索过滤
+  async function fetchModels() {
+    setLoadingModels(true);
+    try {
+      const r = await api.getModels();
+      if (r.error) { toast(r.message || "拉取失败"); return; }
+      const list = r.models || [];
+      if (!list.length) { toast("没拉到模型，检查 Key 和接口地址"); return; }
+      const nextModel = list.includes(settings.model) ? settings.model : list[0];
+      upd({ models: list, model: nextModel });
+      toast(`已拉取 ${list.length} 个模型`);
+    } catch (e) {
+      toast((e as Error).message || "拉取失败");
+    } finally {
+      setLoadingModels(false);
+    }
+  }
+
   const noneEnabled = !settings.codexEnabled && !settings.claudeEnabled;
+  const q = modelSearch.trim().toLowerCase();
+  const visibleModels = settings.models.filter((md) => !q || md.toLowerCase().includes(q));
 
   return (
     <PageShell title="设置">
@@ -76,6 +109,18 @@ export default function SettingsPage() {
             <span className="rounded-capsule bg-sakura/45 px-2.5 py-0.5 text-[12px] font-medium text-rose">常开</span>
           </div>
           <div className="block-white space-y-3 rounded-[26px] p-4">
+            <div>
+              <span className="mb-1.5 block text-[14px] text-mute">接口类型（官方 Key / 自定义代理都支持）</span>
+              <Segmented<string>
+                value={settings.provider}
+                onChange={onProviderChange}
+                options={[
+                  { value: "openai", label: "官方 OpenAI" },
+                  { value: "deepseek", label: "官方 DeepSeek" },
+                  { value: "custom", label: "自定义" },
+                ]}
+              />
+            </div>
             <label className="block">
               <span className="mb-1.5 flex items-center gap-1.5 text-[14px] text-mute"><IconKey size={16} /> API Key</span>
               <div className="flex gap-2">
@@ -95,10 +140,10 @@ export default function SettingsPage() {
             </button>
             <p className="text-[12px] text-mute">Key 只存在后端，不进前端代码、不进备份文件。</p>
             <label className="block">
-              <span className="mb-1.5 block text-[14px] text-mute">自定义代理地址（支持 http / 内网地址）</span>
+              <span className="mb-1.5 block text-[14px] text-mute">接口地址（官方类型已自动填好，改地址会自动切回自定义）</span>
               <input
                 value={settings.proxyUrl}
-                onChange={(e) => upd({ proxyUrl: e.target.value })}
+                onChange={(e) => upd({ proxyUrl: e.target.value, provider: "custom" })}
                 placeholder="http://192.168.1.10:8080/v1"
                 inputMode="url"
                 autoCapitalize="off"
@@ -112,9 +157,15 @@ export default function SettingsPage() {
         <section>
           <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">模型</h2>
           <div className="block-white space-y-2 rounded-[26px] p-4">
-            <p className="text-[13px] text-mute">聊天底栏会显示当前模型，点一下就能切换</p>
+            <p className="text-[13px] text-mute">拉取模型后点名称即切换，也可以搜索过滤</p>
+            <div className="flex gap-2">
+              <input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型…" autoCapitalize="off" className="field" />
+              <button onClick={fetchModels} disabled={loadingModels} className="btn-ghost shrink-0 px-4 text-[15px] disabled:opacity-50">
+                {loadingModels ? "拉取中…" : "拉取模型"}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-2">
-              {settings.models.map((md) => (
+              {visibleModels.map((md) => (
                 <span key={md} className={`flex items-center gap-1 rounded-capsule py-1.5 pl-3 pr-1.5 font-mono text-[13px] ${md === settings.model ? "bg-sakura/35 text-rose" : "bg-fog text-ink/80"}`}>
                   <button onClick={() => upd({ model: md })}>{md}</button>
                   <button
@@ -130,6 +181,7 @@ export default function SettingsPage() {
                   </button>
                 </span>
               ))}
+              {visibleModels.length === 0 && <p className="text-[13px] text-mute">没有匹配的模型</p>}
             </div>
             <div className="flex gap-2">
               <input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder="添加模型名，如 gpt-4o-mini" autoCapitalize="off" className="field font-mono" />
@@ -161,7 +213,7 @@ export default function SettingsPage() {
             <div className="space-y-2 p-4">
               <p className="flex items-center gap-1.5 text-[14px] text-mute"><IconHand size={16} /> 当前默认动手入口</p>
               {noneEnabled ? (
-                <p className="rounded-2xl bg-fog px-4 py-3 text-[15px] text-mute">两个入口都关闭了，echo 只聊天不动手。</p>
+                <p className="rounded-2xl bg-fog px-4 py-3 text-[15px] text-mute">两个入口都关闭了，MCP 工具全部走 API，不碰后端。</p>
               ) : (
                 <Segmented<Hand>
                   value={settings.defaultHand}
@@ -172,19 +224,20 @@ export default function SettingsPage() {
                   ]}
                 />
               )}
+              <p className="text-[12px] text-mute">开启任一入口后，MCP 工具自动交给后端执行；都关闭则只用 API。</p>
             </div>
           </div>
         </section>
 
-        {/* MCP 工具（P0 仅占位，P1 接入） */}
+        {/* MCP 工具 */}
         <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">MCP 工具 · 三个入口共用（P1 接入）</h2>
+          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">MCP 工具 · 默认走 API</h2>
           <div className="block-white divide-y divide-line overflow-hidden rounded-[26px]">
             {chatTools.map((t) => (
               <div key={t.id} className="flex items-center gap-3 px-4 py-3">
                 <div className="flex-1">
                   <p className="text-[16px]">{t.label}</p>
-                  <p className="text-[12px] text-mute">{t.via === "API" ? "默认走 API" : "默认交给动手入口"}</p>
+                  <p className="text-[12px] text-mute">默认走 API · 开动手后走后端</p>
                 </div>
                 <Toggle
                   label={`启用${t.label}`}
@@ -193,6 +246,19 @@ export default function SettingsPage() {
                 />
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* 桌面显示 */}
+        <section>
+          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">桌面显示</h2>
+          <div className="block-white divide-y divide-line overflow-hidden rounded-[26px]">
+            <Row icon={<IconWifi size={20} />} title="顶部状态栏" sub={settings.showStatusBar ? "显示" : "隐藏"}>
+              <Toggle label="显示状态栏" on={settings.showStatusBar} onChange={(v) => upd({ showStatusBar: v })} />
+            </Row>
+            <Row icon={<IconMusic size={20} />} title="音量（静音）" sub={settings.mute ? "已静音" : "开启"}>
+              <Toggle label="音量开关" on={!settings.mute} onChange={(v) => upd({ mute: !v })} />
+            </Row>
           </div>
         </section>
 
@@ -224,7 +290,7 @@ export default function SettingsPage() {
         </section>
 
         <section className="pb-4">
-          <p className="mt-3 text-center text-[12px] text-mute">echo · P0 · 聊天与记忆保存在后端，Key 不落前端</p>
+          <p className="mt-3 text-center text-[12px] text-mute">echo · 聊天与记忆保存在后端，Key 不落前端</p>
         </section>
       </div>
     </PageShell>

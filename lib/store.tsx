@@ -46,6 +46,7 @@ export type Reminder = {
 export type Hand = "codex" | "claude";
 export type Settings = {
   apiKey: string;
+  provider: string;
   proxyUrl: string;
   codexEnabled: boolean;
   claudeEnabled: boolean;
@@ -53,6 +54,8 @@ export type Settings = {
   model: string;
   models: string[];
   quietThink: boolean;
+  showStatusBar: boolean;
+  mute: boolean;
   tools: Record<string, boolean>;
 };
 
@@ -73,13 +76,16 @@ const defaultState: State = {
   files: seedFiles,
   settings: {
     apiKey: "",
-    proxyUrl: "https://api.example.com/v1",
+    provider: "openai",
+    proxyUrl: "https://api.openai.com/v1",
     codexEnabled: true,
     claudeEnabled: true,
     defaultHand: "claude",
     model: "claude-sonnet-4-5",
     models: ["claude-sonnet-4-5", "gpt-4o", "deepseek-chat"],
     quietThink: true,
+    showStatusBar: true,
+    mute: false,
     tools: { translate: true, media: true, worldbook: true, miniapp: true, script: true },
   },
 };
@@ -149,6 +155,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           settings: {
             ...prev.settings,
             apiKey: "", // Key 不落前端
+            provider: cfg.provider ?? prev.settings.provider,
             proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
             model: cfg.model ?? prev.settings.model,
             models: cfg.models ?? prev.settings.models,
@@ -156,6 +163,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             claudeEnabled: cfg.claudeEnabled ?? prev.settings.claudeEnabled,
             defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
             quietThink: cfg.quietThink ?? prev.settings.quietThink,
+            showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
+            mute: cfg.mute ?? prev.settings.mute,
             tools: cfg.tools ?? prev.settings.tools,
           },
         }));

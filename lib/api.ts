@@ -70,6 +70,8 @@ export const api = {
   getSettings: () => jsonFetch("/api/settings"),
   saveSettings: (patch: Record<string, unknown>) => jsonFetch("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
   testConnection: () => jsonFetch("/api/settings/test", { method: "POST" }),
+  // 拉取模型列表（走后端 /models，可选搜索）
+  getModels: (q?: string) => jsonFetch<{ models: string[]; error?: string; message?: string }>(`/api/models${q ? `?q=${encodeURIComponent(q)}` : ""}`),
 
   // 记忆
   getMemory: () => jsonFetch<{ memory: any[]; reminders: any[] }>("/api/memory"),

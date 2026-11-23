@@ -5,11 +5,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/Chrome";
 import {
-  IconCode, IconCopy, IconGlobe, IconHand, IconMusic, IconPlus, IconRetry, IconSend, IconStar, IconStop, IconTrash, IconWand, IconBook,
+  IconCode, IconCopy, IconHand, IconMusic, IconRetry, IconSend, IconStar, IconStop, IconTrash, IconWand,
   IconClip, IconMic, IconChevron, IconClock, IconSpark, IconTool, IconImage, IconCheck,
 } from "@/components/Icons";
 import { Card, Msg, uid, useStore } from "@/lib/store";
-import { chatTools, fileKindLabel, Think, ToolId } from "@/lib/mock";
+import { fileKindLabel, Think } from "@/lib/mock";
 import { api } from "@/lib/api";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
@@ -21,10 +21,6 @@ type Work = {
   start: number;
   collapsed: boolean;
   confirm?: { text: string; onOk: () => void; onNo: () => void };
-};
-
-const toolIcon: Record<ToolId, (p: { size?: number }) => JSX.Element> = {
-  translate: IconGlobe, media: IconMusic, worldbook: IconWand, miniapp: IconCode, script: IconBook,
 };
 
 const fmtTime = (t: number) => {
@@ -53,7 +49,6 @@ function Chat() {
   const [working, setWorking] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
-  const [tray, setTray] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -149,7 +144,6 @@ function Chat() {
     if (!input.trim() || busy || confirm) return;
     sendText(input);
     setInput("");
-    setTray(false);
     setModelMenu(false);
   }
 
@@ -174,14 +168,6 @@ function Chat() {
     const c = confirm;
     setConfirm(null);
     ok ? c.onOk() : c.onNo();
-  }
-
-  function pickTool(id: ToolId) {
-    if (settings.tools[id] === false) return toast("这个工具在设置里关掉了");
-    const t = chatTools.find((x) => x.id === id)!;
-    setInput(t.prompt);
-    setTray(false);
-    setTimeout(() => inputRef.current?.focus(), 50);
   }
 
   function openMenu(e: React.MouseEvent<HTMLDivElement>, m: Msg) {
@@ -251,7 +237,7 @@ function Chat() {
 
       <div className="space-y-1 pt-2">
         {messages.length === 0 && (
-          <p className="pt-20 text-center text-mute">和 echo 说点什么吧 ( ˘ᵕ˘ )<br /><span className="text-[13px]">点左下角的 + 可以直接用工具</span></p>
+          <p className="pt-20 text-center text-mute">和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
         )}
         {messages.map((m) => (
           <Bubble key={m.id} m={m} quiet={quiet} onTap={openMenu} onRetry={() => retry(m.id)} />
@@ -309,30 +295,6 @@ function Chat() {
         </div>
       )}
 
-      {/* 工具 / 快捷指令托盘 */}
-      {tray && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setTray(false)} />
-          <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+122px)] z-30 mx-auto w-full max-w-[430px] px-3 animate-pop">
-            <div className="block-white rounded-[28px] p-3">
-              <p className="mb-2 px-1 text-[13px] text-mute">工具 / 快捷指令 · 也可以直接打字触发</p>
-              <div className="grid grid-cols-5 gap-1">
-                {chatTools.map((t) => {
-                  const Icon = toolIcon[t.id];
-                  const off = settings.tools[t.id] === false;
-                  return (
-                    <button key={t.id} onClick={() => pickTool(t.id)} className={`press flex flex-col items-center gap-1.5 rounded-2xl py-2 ${off ? "opacity-35" : ""}`}>
-                      <span className="orb h-12 w-12"><Icon size={22} /></span>
-                      <span className="text-center text-[12px] leading-tight">{t.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
       {/* 模型选择 */}
       {modelMenu && (
         <>
@@ -371,13 +333,6 @@ function Chat() {
             className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-ink outline-none placeholder:text-mute"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
-            <button
-              aria-label="工具 / 快捷指令"
-              onClick={() => { setTray((v) => !v); setModelMenu(false); }}
-              className={`press grid h-9 w-9 shrink-0 place-items-center rounded-full transition ${tray ? "rotate-45 bg-rose text-white" : "bg-fog text-orb"}`}
-            >
-              <IconPlus size={19} />
-            </button>
             <button aria-label="附件" onClick={() => toast("附件先占位，P1 接上")} className="press grid h-9 w-9 shrink-0 place-items-center rounded-full bg-fog text-orb">
               <IconClip size={18} />
             </button>
@@ -385,7 +340,7 @@ function Chat() {
               <IconMic size={18} />
             </button>
             <button
-              onClick={() => { setModelMenu((v) => !v); setTray(false); }}
+              onClick={() => setModelMenu((v) => !v)}
               className="press flex h-9 min-w-0 flex-1 items-center justify-between gap-1 rounded-capsule border border-line bg-fog/60 px-3 font-mono text-[13px] text-ink/80"
             >
               <span className="truncate">{settings.model}</span>

@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IconBack } from "./Icons";
+import { useStore } from "@/lib/store";
 
-/** 顶部装饰状态栏 */
+/** 顶部装饰状态栏（可在设置里手动关闭） */
 export function StatusBar() {
+  const { settings } = useStore();
   const [time, setTime] = useState("");
   useEffect(() => {
     const tick = () => {
@@ -16,6 +18,7 @@ export function StatusBar() {
     const t = setInterval(tick, 15_000);
     return () => clearInterval(t);
   }, []);
+  if (settings.showStatusBar === false) return null;
   return (
     <div className="flex h-11 items-center justify-between px-6 pt-[env(safe-area-inset-top)] text-[15px] font-semibold text-ink" aria-hidden>
       <span className="tabular-nums">{time}</span>
