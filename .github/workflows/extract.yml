@@ -1,0 +1,28 @@
+name: Extract v3.1 archive
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract archive to repository root
+        run: |
+          unzip -o echo-pwa-v3.1.zip
+          rm echo-pwa-v3.1.zip
+          rm -f echo-pwa/tsconfig.tsbuildinfo
+          mv echo-pwa/README.md echo-pwa/app echo-pwa/components echo-pwa/lib echo-pwa/public echo-pwa/next-env.d.ts echo-pwa/next.config.mjs echo-pwa/package-lock.json echo-pwa/package.json echo-pwa/postcss.config.mjs echo-pwa/tailwind.config.ts echo-pwa/tsconfig.json .
+          rmdir echo-pwa
+          rm -rf .github
+          echo '--- files ---'
+          find . -type f | sort
+      - name: Commit extracted files
+        run: |
+          git config user.name "shukuiz"
+          git config user.email "shukuiz@users.noreply.github.com"
+          git add -A
+          git status --short
+          git commit -m "Add echo-pwa v3.1 source files" || echo "nothing to commit"
+          git push
