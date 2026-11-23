@@ -12,6 +12,14 @@ type TestState = { status: "idle" | "testing" | "ok" | "fail"; msg?: string };
 const OFFICIAL_BASES: Record<string, string> = {
   openai: "https://api.openai.com/v1",
   deepseek: "https://api.deepseek.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+};
+
+// 切换官方类型时顺带切到对应默认模型，避免拿着 OpenAI 模型名去请求 Claude
+const OFFICIAL_DEFAULT_MODEL: Record<string, string> = {
+  openai: "gpt-4o-mini",
+  deepseek: "deepseek-chat",
+  anthropic: "claude-sonnet-4-5",
 };
 
 export default function SettingsPage() {
@@ -43,10 +51,12 @@ export default function SettingsPage() {
     api.saveSettings(p).catch((e) => toast(e.message || "保存失败"));
   };
 
-  // 接口类型切换：官方接口自动填好地址；自定义则手填
+  // 接口类型切换：官方接口自动填好地址并切默认模型；自定义则手填
   const onProviderChange = (v: string) => {
-    if (v === "custom") upd({ provider: v });
-    else upd({ provider: v, proxyUrl: OFFICIAL_BASES[v] });
+    if (v === "custom") { upd({ provider: v }); return; }
+    const m = OFFICIAL_DEFAULT_MODEL[v];
+    const models = settings.models.includes(m) ? settings.models : [m, ...settings.models];
+    upd({ provider: v, proxyUrl: OFFICIAL_BASES[v], model: m, models });
   };
 
   // 保存 API Key：只写后端，前端不落任何 Key
@@ -116,6 +126,7 @@ export default function SettingsPage() {
                 onChange={onProviderChange}
                 options={[
                   { value: "openai", label: "官方 OpenAI" },
+                  { value: "anthropic", label: "官方 Claude" },
                   { value: "deepseek", label: "官方 DeepSeek" },
                   { value: "custom", label: "自定义" },
                 ]}
@@ -150,6 +161,19 @@ export default function SettingsPage() {
                 className="field"
               />
             </label>
+            {settings.provider === "anthropic" && (
+              <label className="block">
+                <span className="mb-1.5 block text-[14px] text-mute">Workspace ID（可选 · 未绑定工作区的 Key 才需要）</span>
+                <input
+                  value={settings.anthropicWorkspaceId}
+                  onChange={(e) => upd({ anthropicWorkspaceId: e.target.value })}
+                  placeholder="wrkspc_…（留空表示 Key 已绑定工作区）"
+                  autoCapitalize="off"
+                  autoComplete="off"
+                  className="field font-mono"
+                />
+              </label>
+            )}
           </div>
         </section>
 

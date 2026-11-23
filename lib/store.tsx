@@ -48,6 +48,7 @@ export type Settings = {
   apiKey: string;
   provider: string;
   proxyUrl: string;
+  anthropicWorkspaceId: string;
   codexEnabled: boolean;
   claudeEnabled: boolean;
   defaultHand: Hand;
@@ -78,6 +79,7 @@ const defaultState: State = {
     apiKey: "",
     provider: "openai",
     proxyUrl: "https://api.openai.com/v1",
+    anthropicWorkspaceId: "",
     codexEnabled: true,
     claudeEnabled: true,
     defaultHand: "claude",
@@ -157,6 +159,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             apiKey: "", // Key 不落前端
             provider: cfg.provider ?? prev.settings.provider,
             proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
+            anthropicWorkspaceId: cfg.anthropicWorkspaceId ?? prev.settings.anthropicWorkspaceId,
             model: cfg.model ?? prev.settings.model,
             models: cfg.models ?? prev.settings.models,
             codexEnabled: cfg.codexEnabled ?? prev.settings.codexEnabled,

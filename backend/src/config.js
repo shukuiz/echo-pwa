@@ -2,15 +2,18 @@
 import { paths, readJSON, writeJSON, DATA_DIR } from "./storage.js";
 
 // 官方接口地址：接口类型选了官方后，proxyUrl 自动落到这里，用户仍可改回自定义
+// Anthropic 走官方 OpenAI 兼容层（https://api.anthropic.com/v1/），复用同一套 /chat/completions 转发
 export const OFFICIAL_BASES = {
   openai: "https://api.openai.com/v1",
   deepseek: "https://api.deepseek.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
 };
 
 const DEFAULT_CONFIG = {
   apiKey: "",
-  provider: "openai", // openai | deepseek | custom
+  provider: "openai", // openai | deepseek | anthropic | custom
   proxyUrl: "https://api.openai.com/v1",
+  anthropicWorkspaceId: "", // 可选：未限定 workspace 的 Claude 个人/服务账户 Key 需要带 anthropic-workspace-id
   model: "gpt-4o-mini",
   models: ["gpt-4o-mini", "gpt-4o", "deepseek-chat"],
   codexEnabled: true,
@@ -35,6 +38,15 @@ export async function saveConfig(patch) {
   if (patch.apiKey === undefined) next.apiKey = cur.apiKey;
   await writeJSON(paths.config(DATA_DIR), next);
   return next;
+}
+
+/** 构造上游请求的认证头：统一 Bearer；Anthropic 未限定 workspace 的 Key 需额外带 anthropic-workspace-id */
+export function authHeaders(cfg) {
+  const h = { Authorization: `Bearer ${cfg.apiKey}` };
+  if (cfg.provider === "anthropic" && cfg.anthropicWorkspaceId) {
+    h["anthropic-workspace-id"] = cfg.anthropicWorkspaceId;
+  }
+  return h;
 }
 
 /** 供前端读取的脱敏配置：不回传 Key 明文，只回掩码与是否存在 */

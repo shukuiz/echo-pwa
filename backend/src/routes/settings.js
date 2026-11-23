@@ -1,5 +1,5 @@
 // 设置接口：Key / 代理地址只经后端读写（GET 返回脱敏，PUT 保存，POST /test 真实连通测试）
-import { getConfig, saveConfig, publicConfig } from "../config.js";
+import { getConfig, saveConfig, publicConfig, authHeaders } from "../config.js";
 
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
 
@@ -17,6 +17,7 @@ export default async function settingsRoute(app) {
     if (typeof body.apiKey === "string") patch.apiKey = body.apiKey.trim();
     if (typeof body.proxyUrl === "string") patch.proxyUrl = body.proxyUrl.trim();
     if (typeof body.provider === "string") patch.provider = body.provider;
+    if (typeof body.anthropicWorkspaceId === "string") patch.anthropicWorkspaceId = body.anthropicWorkspaceId.trim();
     if (typeof body.model === "string") patch.model = body.model;
     if (Array.isArray(body.models)) patch.models = body.models;
     if (body.codexEnabled !== undefined) patch.codexEnabled = !!body.codexEnabled;
@@ -38,7 +39,7 @@ export default async function settingsRoute(app) {
     if (!/^https?:\/\//i.test(base)) return { error: "bad_base", message: "接口地址需以 http(s):// 开头", models: [] };
     try {
       const res = await fetch(`${base}/models`, {
-        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+        headers: authHeaders(cfg),
         signal: AbortSignal.timeout(12000),
       });
       if (!res.ok) return { error: "upstream", message: `接口返回 ${res.status}`, models: [] };
@@ -64,7 +65,7 @@ export default async function settingsRoute(app) {
     const started = Date.now();
     try {
       const res = await fetch(`${base}/models`, {
-        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+        headers: authHeaders(cfg),
         signal: AbortSignal.timeout(8000),
       });
       const ms = Date.now() - started;

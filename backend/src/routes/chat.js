@@ -1,5 +1,5 @@
 // 聊天转发：拼 System Prompt + 最近 20 条消息，流式请求 OpenAI 兼容接口并原样透传
-import { getConfig } from "../config.js";
+import { getConfig, authHeaders } from "../config.js";
 import { buildSystemPrompt } from "../prompt.js";
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
 
@@ -58,7 +58,7 @@ export default async function chatRoute(app) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${cfg.apiKey}`, // Key 仅在后端使用
+          ...authHeaders(cfg), // Key 仅在后端使用；Anthropic 额外带 workspace-id
         },
         body: JSON.stringify({ model, messages, stream: true }),
       });
