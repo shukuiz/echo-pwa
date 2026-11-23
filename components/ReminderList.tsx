@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Reminder, uid, useStore } from "@/lib/store";
+import { Reminder, useStore } from "@/lib/store";
 import { fmtTime, parseReminder } from "@/lib/parseTime";
+import { api } from "@/lib/api";
 import { Sheet } from "./Chrome";
 import { IconBell, IconCheck, IconEdit, IconPin, IconSend, IconTrash } from "./Icons";
 
@@ -29,19 +30,38 @@ export default function ReminderList({ showPin = false }: { showPin?: boolean })
     };
   }, [reminders]);
 
-  function add() {
+  async function add() {
     if (!preview) return;
-    set("reminders", (rs) => [...rs, { id: uid(), text: preview.text, time: preview.time, done: false, pinned: false }]);
-    toast(`已设好：${fmtTime(preview.time)}`);
-    setInput("");
+    try {
+      const created = await api.addReminder({ text: preview.text, time: preview.time, pinned: false });
+      set("reminders", (rs) => [...rs, created]);
+      toast(`已设好：${fmtTime(preview.time)}`);
+      setInput("");
+    } catch (e) {
+      toast((e as Error).message || "设置失败");
+    }
   }
-  const patch = (id: string, p: Partial<Reminder>) => set("reminders", (rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)));
-  const remove = (id: string) => {
+  async function patch(id: string, p: Partial<Reminder>) {
+    const prev = reminders;
+    set("reminders", (rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)));
+    try {
+      await api.updateReminder(id, p);
+    } catch (e) {
+      toast((e as Error).message || "操作失败");
+      set("reminders", prev);
+    }
+  }
+  async function remove(id: string) {
     if (confirmDel !== id) { setConfirmDel(id); setTimeout(() => setConfirmDel((c) => (c === id ? null : c)), 2500); return; }
-    set("reminders", (rs) => rs.filter((r) => r.id !== id));
-    setConfirmDel(null);
-    toast("已删除");
-  };
+    try {
+      await api.deleteReminder(id);
+      set("reminders", (rs) => rs.filter((r) => r.id !== id));
+      setConfirmDel(null);
+      toast("已删除");
+    } catch (e) {
+      toast((e as Error).message || "删除失败");
+    }
+  }
 
   const Row = ({ r }: { r: Reminder }) => {
     const overdue = !r.done && r.time < Date.now();

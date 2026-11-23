@@ -9,7 +9,8 @@ import {
   IconClip, IconMic, IconChevron, IconClock, IconSpark, IconTool, IconImage, IconCheck,
 } from "@/components/Icons";
 import { Card, Msg, uid, useStore } from "@/lib/store";
-import { chatTools, fileKindLabel, MockPlan, planReply, Think, ToolId } from "@/lib/mock";
+import { chatTools, fileKindLabel, Think, ToolId } from "@/lib/mock";
+import { api } from "@/lib/api";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
 type Menu = { id: string; top: number; left: number; right: number; mine: boolean; rect: { top: number; left: number; width: number; height: number }; html: string; cls: string };
@@ -57,13 +58,12 @@ function Chat() {
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const streamTimer = useRef<ReturnType<typeof setInterval>>();
+  const abortRef = useRef<AbortController | null>(null);
+  const messagesRef = useRef<Msg[]>(messages);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const presetDone = useRef(false);
   const busy = !!streamingId || !!working || !!work;
-  const handName = settings.defaultHand === "codex" ? "Codex" : "Claude Code";
-  const handOn = settings.codexEnabled || settings.claudeEnabled;
   const workOpen = !!work && !work.collapsed;
 
   useEffect(() => {
@@ -75,6 +75,10 @@ function Chat() {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [work]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => () => clearAll(), []);
 
@@ -92,131 +96,53 @@ function Chat() {
   function clearAll() {
     timers.current.forEach(clearTimeout);
     timers.current = [];
-    clearInterval(streamTimer.current);
+    abortRef.current?.abort();
+    abortRef.current = null;
   }
-  const later = (fn: () => void, ms: number) => timers.current.push(setTimeout(fn, ms));
   const patch = (id: string, p: Partial<Msg>) => set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, ...p } : m)));
 
-  /** 模拟逐字打出；card 在打完后显示 */
-  function stream(full: string, opts: { reuseId?: string; card?: Card; think?: Think } = {}) {
-    const id = opts.reuseId ?? uid();
-    if (opts.reuseId) patch(id, { text: "", status: "streaming", at: Date.now(), card: opts.card, think: opts.think });
-    else set("messages", (ms) => [...ms, { id, role: "echo", text: "", status: "streaming", at: Date.now(), card: opts.card, think: opts.think }]);
-    setStreamingId(id);
-    let i = 0;
-    clearInterval(streamTimer.current);
-    streamTimer.current = setInterval(() => {
-      i += Math.random() < 0.3 ? 2 : 1;
-      const done = i >= full.length;
-      patch(id, { text: full.slice(0, i), status: done ? "done" : "streaming" });
-      if (done) {
-        clearInterval(streamTimer.current);
-        setStreamingId(null);
-      }
-    }, 34);
-    return Math.ceil(full.length / 1.3) * 34 + 200;
-  }
-
-  function finishTool(plan: MockPlan & { kind: "tool" }, via: string, reuseId?: string, think?: Think) {
-    let card = plan.card;
-    if (plan.file) {
-      const fileId = uid();
-      set("files", (fs) => [{ id: fileId, ...plan.file!, at: Date.now(), via }, ...fs]);
-      card = { type: "file", fileId, name: plan.file.name, kind: plan.file.kind, preview: plan.file.content };
-    }
-    stream(plan.text, { reuseId, card: card ?? undefined, think: think ?? plan.think });
-  }
-
-  function runTool(plan: MockPlan & { kind: "tool" }, reuseId?: string) {
-    // 轻活或没开动手入口：走 API 工具调用
-    if (plan.via === "API" || !handOn) {
-      const think: Think =
-        plan.via === "API"
-          ? plan.think
-          : { text: "动手入口都没开，先用 API 的工具把能做的做了。", tags: [{ kind: "tool", label: `调用了【${plan.toolName}】· 动手入口未开` }] };
-      setWorking(`正在调用【${plan.toolName}】…`);
-      later(() => { setWorking(null); finishTool(plan, "API", reuseId, think); }, 2200);
-      return;
-    }
-    // 重活：交给默认动手入口，打开工作窗
-    const intro = (plan.handIntro ?? "这个交给动手入口去做。").replace("动手入口", ` ${handName} `);
-    const introThink: Think = { text: plan.think.text, tags: [{ kind: "hand", label: `交给 ${handName}` }] };
-    const wait = stream(intro, { reuseId, think: introThink });
-    later(() => startWork(plan), wait + 300);
-  }
-
-  function startWork(plan: MockPlan & { kind: "tool" }) {
-    const steps = plan.steps ?? [];
-    const begin = Date.now();
-    setNow(begin);
-    setWork({ hand: handName, branch: "feat/p1", lines: [], start: begin, collapsed: false });
-    const step = (i: number, approved = false) => {
-      if (i >= steps.length) {
-        later(() => {
-          const secs = Math.round((Date.now() - begin) / 1000);
-          setWork(null);
-          finishTool(plan, handName, undefined, {
-            text: `${handName} 做完了，把结果整理一下发给她。`,
-            tags: [{ kind: "hand", label: `${handName} 完成 · 用时 ${secs} 秒` }],
-          });
-        }, 700);
-        return;
-      }
-      if (plan.needConfirm && plan.confirmAt === i && !approved) {
-        setWork((w) => w && {
-          ...w,
-          collapsed: false,
-          confirm: {
-            text: plan.confirmText ?? "这一步需要你点头",
-            onOk: () => { setWork((x) => x && { ...x, confirm: undefined }); later(() => step(i, true), 400); },
-            onNo: () => { setWork(null); stream("收到，这一步先不做了，文件都没动 ( ˘ᵕ˘ )"); },
-          },
-        });
-        return;
-      }
-      setWork((w) => w && { ...w, lines: [...w.lines, steps[i]] });
-      later(() => step(i + 1), 750);
-    };
-    later(() => step(0), 500);
-  }
-
-  function run(text: string, opts: { reuseId?: string; noFail?: boolean } = {}) {
-    let plan = planReply(text);
-    if (opts.noFail && plan.kind === "fail") plan = { kind: "reply", text: "重新试了一次，这次成功啦 (っ˘ω˘ς)" };
-
-    if (plan.kind === "reply") {
-      const p = plan;
-      setWorking("echo 正在想…");
-      later(() => { setWorking(null); stream(p.text, { reuseId: opts.reuseId, think: p.think }); }, 700);
-    } else if (plan.kind === "tool") {
-      runTool(plan, opts.reuseId);
-    } else if (plan.kind === "confirm") {
-      const p = plan;
-      setWorking("echo 正在想…");
-      later(() => {
-        setWorking(null);
-        setConfirm({
-          action: p.action,
-          onOk: () => { setWorking("正在做…"); later(() => { setWorking(null); stream(p.okText); }, 1500); },
-          onNo: () => stream(p.noText),
-        });
-      }, 900);
+  /** 把最近 20 条消息发给后端，流式逐字回显 */
+  async function doChat(history: Msg[], errId?: string) {
+    const echoId = errId ?? uid();
+    if (errId) {
+      patch(errId, { text: "", status: "streaming", at: Date.now() });
     } else {
-      const id = opts.reuseId ?? uid();
-      setWorking("echo 正在想…");
-      later(() => {
-        setWorking(null);
-        if (opts.reuseId) patch(id, { text: "", status: "error" });
-        else set("messages", (ms) => [...ms, { id, role: "echo", text: "", status: "error", at: Date.now() }]);
-      }, 1100);
+      set("messages", (ms) => [...ms, { id: echoId, role: "echo", text: "", status: "streaming", at: Date.now() }]);
+    }
+    setStreamingId(echoId);
+    setWorking("echo 正在想…");
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const input = history.slice(-20).map((m) => ({ role: m.role, text: m.text }));
+    let first = true;
+
+    try {
+      await api.chatStream(input, {
+        model: settings.model,
+        signal: ac.signal,
+        onDelta: (d) => {
+          if (first) { setWorking(null); first = false; }
+          set("messages", (ms) => ms.map((m) => (m.id === echoId ? { ...m, text: m.text + d } : m)));
+        },
+      });
+      patch(echoId, { status: "done" });
+    } catch (e) {
+      const aborted = (e as Error)?.name === "AbortError";
+      patch(echoId, { status: aborted ? "stopped" : "error" });
+    } finally {
+      setWorking(null);
+      setStreamingId(null);
+      abortRef.current = null;
     }
   }
 
   function sendText(raw: string) {
     const text = raw.trim();
     if (!text) return;
-    set("messages", (ms) => [...ms, { id: uid(), role: "user", text, status: "done", at: Date.now() }]);
-    run(text);
+    const userMsg: Msg = { id: uid(), role: "user", text, status: "done", at: Date.now() };
+    set("messages", (ms) => [...ms, userMsg]);
+    doChat([...messagesRef.current, userMsg]);
   }
 
   function send() {
@@ -228,7 +154,8 @@ function Chat() {
   }
 
   function stop() {
-    clearAll();
+    abortRef.current?.abort();
+    abortRef.current = null;
     setWorking(null);
     setWork(null);
     if (streamingId) patch(streamingId, { status: "stopped" });
@@ -238,8 +165,8 @@ function Chat() {
   function retry(errId: string) {
     if (busy) return;
     const idx = messages.findIndex((m) => m.id === errId);
-    const prevUser = [...messages.slice(0, idx)].reverse().find((m) => m.role === "user");
-    run(prevUser?.text ?? "再试一次", { reuseId: errId, noFail: true });
+    if (idx < 0) return;
+    doChat(messages.slice(0, idx), errId);
   }
 
   function answer(ok: boolean) {

@@ -1,0 +1,133 @@
+// 聊天转发：拼 System Prompt + 最近 20 条消息，流式请求 OpenAI 兼容接口并原样透传
+import { getConfig } from "../config.js";
+import { buildSystemPrompt } from "../prompt.js";
+import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
+
+const MAX_HISTORY = 20;
+
+/** 归一化 base url：去掉末尾斜杠 */
+const normBase = (u) => String(u || "").replace(/\/+$/, "");
+
+export default async function chatRoute(app) {
+  // 读取历史聊天记录（供前端初始化）
+  app.get("/api/chat/history", async () => {
+    const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+    return chat;
+  });
+
+  // 流式聊天。请求体：{ messages: [{role,text}], model? }
+  // 响应：text/plain 流，逐段输出模型增量文本（前端原样逐字渲染）
+  app.post("/api/chat", async (req, reply) => {
+    const cfg = await getConfig();
+    if (!cfg.apiKey) {
+      reply.code(400);
+      return { error: "no_key", message: "后端还没有设置 API Key，请先到设置页保存" };
+    }
+    const base = normBase(cfg.proxyUrl);
+    if (!/^https?:\/\//i.test(base)) {
+      reply.code(400);
+      return { error: "bad_base", message: "代理地址需以 http(s):// 开头" };
+    }
+
+    const body = req.body || {};
+    const incoming = Array.isArray(body.messages) ? body.messages : [];
+    const model = body.model || cfg.model;
+
+    // 最近 20 条历史（含本次用户消息），映射为 OpenAI 消息格式
+    const history = incoming.slice(-MAX_HISTORY).map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: String(m.text ?? m.content ?? ""),
+    }));
+
+    const system = await buildSystemPrompt();
+    const messages = [{ role: "system", content: system }, ...history];
+
+    // 落盘：保存这次的用户消息到聊天记录
+    try {
+      const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+      const lastUser = incoming[incoming.length - 1];
+      if (lastUser && lastUser.role === "user") {
+        chat.messages.push({ id: uid(), role: "user", text: lastUser.text, at: Date.now() });
+        await writeJSON(paths.chat(DATA_DIR), chat);
+      }
+    } catch {}
+
+    let upstream;
+    try {
+      upstream = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${cfg.apiKey}`, // Key 仅在后端使用
+        },
+        body: JSON.stringify({ model, messages, stream: true }),
+      });
+    } catch (e) {
+      reply.code(502);
+      return { error: "connect_failed", message: "连不上模型接口：" + e.message };
+    }
+
+    if (!upstream.ok || !upstream.body) {
+      const detail = await upstream.text().catch(() => "");
+      reply.code(upstream.status || 502);
+      return { error: "upstream", message: `模型接口返回 ${upstream.status}`, detail: detail.slice(0, 300) };
+    }
+
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    // 解析 SSE，提取 delta 文本并原样透传给前端
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+
+    const pushDelta = (data) => {
+      // data 为单个 SSE 的 data: 载荷
+      if (data === "[DONE]") return;
+      try {
+        const json = JSON.parse(data);
+        const delta = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content ?? "";
+        if (delta) {
+          fullText += delta;
+          reply.raw.write(delta);
+        }
+      } catch {
+        // 非 JSON 行忽略
+      }
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith("data:")) continue;
+          pushDelta(t.slice(5).trim());
+        }
+      }
+      if (buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
+    } catch (e) {
+      // 上游中断：把已收到的内容返回，前端可据此重试
+    } finally {
+      reply.raw.end();
+    }
+
+    // 落盘：保存助手完整回复
+    try {
+      if (fullText) {
+        const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+        chat.messages.push({ id: uid(), role: "echo", text: fullText, at: Date.now(), status: "done" });
+        await writeJSON(paths.chat(DATA_DIR), chat);
+      }
+    } catch {}
+  });
+}

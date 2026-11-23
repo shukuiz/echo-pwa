@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { seedFiles, seedMemory, seedMessages, seedReminders } from "./mock";
+import { api } from "./api";
 
 export type Role = "user" | "echo";
 export type Card =
@@ -125,6 +126,43 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(KEY, JSON.stringify(state));
     } catch {}
   }, [state, ready]);
+
+  // 启动时从后端拉取最新数据（后端为准），失败则保留本地缓存作为离线兜底
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [hist, mem, cfg] = await Promise.all([api.getHistory(), api.getMemory(), api.getSettings()]);
+        if (cancelled) return;
+        setState((prev) => ({
+          ...prev,
+          messages: (hist.messages || []).map((m) => ({
+            id: m.id ?? uid(),
+            role: m.role,
+            text: m.text ?? "",
+            status: (m.status === "streaming" ? "stopped" : m.status ?? "done") as Msg["status"],
+            at: m.at ?? Date.now(),
+          })),
+          memory: mem.memory || [],
+          reminders: mem.reminders || [],
+          settings: {
+            ...prev.settings,
+            apiKey: "", // Key 不落前端
+            proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
+            model: cfg.model ?? prev.settings.model,
+            models: cfg.models ?? prev.settings.models,
+            codexEnabled: cfg.codexEnabled ?? prev.settings.codexEnabled,
+            claudeEnabled: cfg.claudeEnabled ?? prev.settings.claudeEnabled,
+            defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
+            quietThink: cfg.quietThink ?? prev.settings.quietThink,
+            tools: cfg.tools ?? prev.settings.tools,
+          },
+        }));
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [ready]);
 
   // 主题
   useEffect(() => {

@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { PageShell, Sheet } from "@/components/Chrome";
 import ReminderList from "@/components/ReminderList";
 import { IconDownload, IconEdit, IconPin, IconPlus, IconTrash } from "@/components/Icons";
-import { exportBackup, MemoryItem, MemoryTab, uid, useStore } from "@/lib/store";
+import { exportBackup, MemoryItem, MemoryTab, useStore } from "@/lib/store";
+import { api } from "@/lib/api";
 
 type Tab = MemoryTab | "reminder";
 const tabs: { id: Tab; label: string }[] = [
@@ -27,25 +28,45 @@ export default function MemoryPage() {
     [memory, tab]
   );
 
-  function save() {
+  async function save() {
     if (!draft || !draft.text.trim()) return;
     const title = draft.title.trim() || draft.text.trim().slice(0, 10);
-    if (draft.id) {
-      set("memory", (ms) => ms.map((m) => (m.id === draft.id ? { ...m, title, text: draft.text.trim(), updatedAt: Date.now() } : m)));
-      toast("已修改");
-    } else {
-      set("memory", (ms) => [{ id: uid(), tab: draft.tab, title, text: draft.text.trim(), pinned: false, updatedAt: Date.now() }, ...ms]);
-      toast("已新增");
+    try {
+      if (draft.id) {
+        await api.updateMemory(draft.id, { title, text: draft.text.trim() });
+        set("memory", (ms) => ms.map((m) => (m.id === draft.id ? { ...m, title, text: draft.text.trim(), updatedAt: Date.now() } : m)));
+        toast("已修改");
+      } else {
+        const created = await api.addMemory({ tab: draft.tab, title, text: draft.text.trim() });
+        set("memory", (ms) => [created, ...ms]);
+        toast("已新增");
+      }
+      setDraft(null);
+    } catch (e) {
+      toast((e as Error).message || "保存失败，请确认后端已启动");
     }
-    setDraft(null);
   }
-  const togglePin = (m: MemoryItem) => set("memory", (ms) => ms.map((x) => (x.id === m.id ? { ...x, pinned: !x.pinned } : x)));
-  const remove = (id: string) => {
+  async function togglePin(m: MemoryItem) {
+    const pinned = !m.pinned;
+    set("memory", (ms) => ms.map((x) => (x.id === m.id ? { ...x, pinned } : x)));
+    try {
+      await api.updateMemory(m.id, { pinned });
+    } catch (e) {
+      toast((e as Error).message || "操作失败");
+      set("memory", (ms) => ms.map((x) => (x.id === m.id ? { ...x, pinned: !pinned } : x)));
+    }
+  }
+  async function remove(id: string) {
     if (confirmDel !== id) { setConfirmDel(id); setTimeout(() => setConfirmDel((c) => (c === id ? null : c)), 2500); return; }
-    set("memory", (ms) => ms.filter((m) => m.id !== id));
-    setConfirmDel(null);
-    toast("已删除");
-  };
+    try {
+      await api.deleteMemory(id);
+      set("memory", (ms) => ms.filter((m) => m.id !== id));
+      setConfirmDel(null);
+      toast("已删除");
+    } catch (e) {
+      toast((e as Error).message || "删除失败");
+    }
+  }
 
   return (
     <PageShell

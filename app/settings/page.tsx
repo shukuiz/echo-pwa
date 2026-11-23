@@ -1,37 +1,67 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageShell, Segmented, Toggle } from "@/components/Chrome";
 import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconMoon, IconSun, IconWand } from "@/components/Icons";
 import { Hand, useStore } from "@/lib/store";
 import { chatTools } from "@/lib/mock";
+import { api } from "@/lib/api";
 
 type TestState = { status: "idle" | "testing" | "ok" | "fail"; msg?: string };
 
 export default function SettingsPage() {
-  const { settings, set, theme, toast, resetAll } = useStore();
+  const { settings, set, theme, toast } = useStore();
   const [showKey, setShowKey] = useState(false);
+  const [keyInput, setKeyInput] = useState("");
+  const [keyMask, setKeyMask] = useState("");
+  const [savingKey, setSavingKey] = useState(false);
   const [test, setTest] = useState<TestState>({ status: "idle" });
-  const [confirmReset, setConfirmReset] = useState(false);
   const [newModel, setNewModel] = useState("");
 
-  const upd = (p: Partial<typeof settings>) => set("settings", (s) => {
-    const next = { ...s, ...p };
-    // 默认动手入口必须是已启用的那个
-    if (next.defaultHand === "codex" && !next.codexEnabled && next.claudeEnabled) next.defaultHand = "claude";
-    if (next.defaultHand === "claude" && !next.claudeEnabled && next.codexEnabled) next.defaultHand = "codex";
-    return next;
-  });
+  // 从后端读取已保存的 Key 状态（脱敏）
+  useEffect(() => {
+    api.getSettings().then((cfg) => {
+      if (cfg.hasKey) setKeyMask(cfg.apiKeyMask || "已设置");
+    }).catch(() => {});
+  }, []);
 
-  // 模拟测试连接（不请求真实后端）
-  function testConnection() {
+  // 本地乐观更新 + 异步写后端
+  const upd = (p: Partial<typeof settings>) => {
+    set("settings", (s) => {
+      const next = { ...s, ...p };
+      if (next.defaultHand === "codex" && !next.codexEnabled && next.claudeEnabled) next.defaultHand = "claude";
+      if (next.defaultHand === "claude" && !next.claudeEnabled && next.codexEnabled) next.defaultHand = "codex";
+      return next;
+    });
+    api.saveSettings(p).catch((e) => toast(e.message || "保存失败"));
+  };
+
+  // 保存 API Key：只写后端，前端不落任何 Key
+  async function saveKey() {
+    const k = keyInput.trim();
+    if (!k) return toast("请输入 API Key");
+    setSavingKey(true);
+    try {
+      const cfg = await api.saveSettings({ apiKey: k });
+      setKeyMask(cfg.apiKeyMask || "已设置");
+      setKeyInput("");
+      toast("API Key 已保存到后端");
+    } catch (e) {
+      toast((e as Error).message || "保存失败");
+    } finally {
+      setSavingKey(false);
+    }
+  }
+
+  // 真实测试连接：走后端，不触碰 Key
+  async function testConnection() {
     setTest({ status: "testing" });
-    setTimeout(() => {
-      if (!settings.apiKey.trim()) return setTest({ status: "fail", msg: "还没填 API Key" });
-      if (!/^https?:\/\/.+/.test(settings.proxyUrl.trim())) return setTest({ status: "fail", msg: "代理地址需以 http(s):// 开头" });
-      if (!settings.codexEnabled && !settings.claudeEnabled) return setTest({ status: "ok", msg: `API 正常 · ${120 + Math.floor(Math.random() * 180)}ms（动手入口都已关闭）` });
-      setTest({ status: "ok", msg: `连接成功 · ${120 + Math.floor(Math.random() * 180)}ms · 默认 ${settings.defaultHand === "codex" ? "Codex" : "Claude Code"}` });
-    }, 1300);
+    try {
+      const r = await api.testConnection();
+      setTest(r.ok ? { status: "ok", msg: r.message } : { status: "fail", msg: r.message });
+    } catch (e) {
+      setTest({ status: "fail", msg: (e as Error).message });
+    }
   }
 
   const noneEnabled = !settings.codexEnabled && !settings.claudeEnabled;
@@ -51,21 +81,25 @@ export default function SettingsPage() {
               <div className="flex gap-2">
                 <input
                   type={showKey ? "text" : "password"}
-                  value={settings.apiKey}
-                  onChange={(e) => upd({ apiKey: e.target.value })}
-                  placeholder="sk-…"
+                  value={keyInput}
+                  onChange={(e) => setKeyInput(e.target.value)}
+                  placeholder={keyMask ? `已设置 ${keyMask}，输入新 Key 可替换` : "sk-…（只保存在后端）"}
                   autoComplete="off"
                   className="field"
                 />
                 <button onClick={() => setShowKey((v) => !v)} className="btn-ghost shrink-0 px-4 text-[15px]">{showKey ? "隐藏" : "显示"}</button>
               </div>
             </label>
+            <button onClick={saveKey} disabled={savingKey || !keyInput.trim()} className="btn-ghost w-full py-2.5 text-[15px] disabled:opacity-40">
+              {savingKey ? "保存中…" : "保存 Key 到后端"}
+            </button>
+            <p className="text-[12px] text-mute">Key 只存在后端，不进前端代码、不进备份文件。</p>
             <label className="block">
-              <span className="mb-1.5 block text-[14px] text-mute">自定义代理地址</span>
+              <span className="mb-1.5 block text-[14px] text-mute">自定义代理地址（支持 http / 内网地址）</span>
               <input
                 value={settings.proxyUrl}
                 onChange={(e) => upd({ proxyUrl: e.target.value })}
-                placeholder="https://your-proxy.example.com/v1"
+                placeholder="http://192.168.1.10:8080/v1"
                 inputMode="url"
                 autoCapitalize="off"
                 className="field"
@@ -142,9 +176,9 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* MCP 工具 */}
+        {/* MCP 工具（P0 仅占位，P1 接入） */}
         <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">MCP 工具 · 三个入口共用</h2>
+          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">MCP 工具 · 三个入口共用（P1 接入）</h2>
           <div className="block-white divide-y divide-line overflow-hidden rounded-[26px]">
             {chatTools.map((t) => (
               <div key={t.id} className="flex items-center gap-3 px-4 py-3">
@@ -189,18 +223,8 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* 数据 */}
         <section className="pb-4">
-          <button
-            onClick={() => {
-              if (!confirmReset) { setConfirmReset(true); setTimeout(() => setConfirmReset(false), 2500); return; }
-              resetAll(); setConfirmReset(false); toast("已恢复示例数据");
-            }}
-            className={`w-full rounded-capsule py-3 text-[15px] transition ${confirmReset ? "bg-rose text-white" : "glass text-rose"}`}
-          >
-            {confirmReset ? "再点一次确认重置" : "重置为示例数据"}
-          </button>
-          <p className="mt-3 text-center text-[12px] text-mute">echo · 前端演示版 · 数据只保存在本机</p>
+          <p className="mt-3 text-center text-[12px] text-mute">echo · P0 · 聊天与记忆保存在后端，Key 不落前端</p>
         </section>
       </div>
     </PageShell>
