@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { seedFiles, seedMemory, seedMessages, seedReminders } from "./mock";
-import { api } from "./api";
+import { api, ECHO_AUTH_ENABLED } from "./api";
 
 export type Role = "user" | "echo";
 export type Card =
@@ -113,6 +113,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   // 读取本地存储
   useEffect(() => {
+    if (ECHO_AUTH_ENABLED) {
+      setReady(true);
+      return;
+    }
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
@@ -129,7 +133,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   // 写入本地存储
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || ECHO_AUTH_ENABLED) return;
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
     } catch {}

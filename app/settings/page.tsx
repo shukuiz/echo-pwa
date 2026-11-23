@@ -5,7 +5,7 @@ import { PageShell, Segmented, Toggle } from "@/components/Chrome";
 import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconMoon, IconMusic, IconSun, IconWand, IconWifi } from "@/components/Icons";
 import { Hand, useStore } from "@/lib/store";
 import { chatTools } from "@/lib/mock";
-import { api } from "@/lib/api";
+import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
 
 type TestState = { status: "idle" | "testing" | "ok" | "fail"; msg?: string };
 
@@ -41,9 +41,11 @@ export default function SettingsPage() {
   // 初始化：读取「是否存浏览器」偏好，若曾存过 Key 则回填输入框；再从后端读 Key 状态（脱敏）
   useEffect(() => {
     try {
-      setStoreLocally(localStorage.getItem(LOCAL_KEY_PREF) === "1");
-      const savedKey = localStorage.getItem(LOCAL_KEY);
-      if (savedKey) setKeyInput(savedKey);
+      if (!ECHO_AUTH_ENABLED) {
+        setStoreLocally(localStorage.getItem(LOCAL_KEY_PREF) === "1");
+        const savedKey = localStorage.getItem(LOCAL_KEY);
+        if (savedKey) setKeyInput(savedKey);
+      }
     } catch {}
     api.getSettings().then((cfg) => {
       if (cfg.hasKey) setKeyMask(cfg.apiKeyMask || "已设置");
@@ -178,14 +180,13 @@ export default function SettingsPage() {
             <button onClick={saveKey} disabled={savingKey || !keyInput.trim()} className="btn-ghost w-full py-2.5 text-[15px] disabled:opacity-40">
               {savingKey ? "保存中…" : "保存 Key 到后端"}
             </button>
-            <div className="flex items-center justify-between gap-3 rounded-2xl bg-fog/60 px-3 py-2.5">
+            {!ECHO_AUTH_ENABLED && <div className="flex items-center justify-between gap-3 rounded-2xl bg-fog/60 px-3 py-2.5">
               <div className="flex-1">
                 <p className="text-[14px]">Key 也存本机浏览器</p>
                 <p className="text-[12px] text-mute">{storeLocally ? "刷新后自动回填到输入框" : "默认只存后端，浏览器不留 Key"}</p>
               </div>
               <Toggle label="存本机浏览器" on={storeLocally} onChange={toggleStoreLocally} />
-            </div>
-            <p className="text-[12px] text-mute">Key 默认只存后端，不进前端代码、不进备份文件；开启上方开关后，会额外在你自己的浏览器留一份并自动回填。</p>
+            </div>}
             <label className="block">
               <span className="mb-1.5 block text-[14px] text-mute">接口地址（官方类型已自动填好，改地址会自动切回自定义）</span>
               <input
@@ -353,6 +354,13 @@ export default function SettingsPage() {
         </section>
 
         <section className="pb-4">
+          {ECHO_AUTH_ENABLED && (
+            <button className="btn-ghost w-full py-3" onClick={() => {
+              api.logout().then(() => window.location.reload()).catch((e) => toast(e.message || "退出失败"));
+            }}>
+              退出登录
+            </button>
+          )}
           <p className="mt-3 text-center text-[12px] text-mute">echo · 聊天与记忆保存在后端，Key 不落前端</p>
         </section>
       </div>

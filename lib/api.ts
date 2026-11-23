@@ -1,6 +1,8 @@
 // 后端 API 封装：聊天流式、记忆、文件、设置、提醒
 // 后端地址可用 NEXT_PUBLIC_ECHO_API 覆盖，默认本机 8787（开发/同机部署）
-const API_BASE = (process.env.NEXT_PUBLIC_ECHO_API || "http://localhost:8787").replace(/\/+$/, "");
+export const ECHO_AUTH_ENABLED = process.env.NEXT_PUBLIC_ECHO_AUTH === "1";
+export const ECHO_AUTH_REQUIRED_EVENT = "echo-auth-required";
+const API_BASE = ECHO_AUTH_ENABLED ? "" : (process.env.NEXT_PUBLIC_ECHO_API || "http://localhost:8787").replace(/\/+$/, "");
 
 export type ApiRole = "user" | "echo";
 
@@ -14,6 +16,7 @@ async function jsonFetch<T = any>(path: string, opts: RequestInit = {}): Promise
     headers,
   });
   if (!res.ok) {
+    notifyExpiredSession(res, path);
     let msg = `请求失败 (${res.status})`;
     try {
       const j = await res.json();
@@ -23,6 +26,12 @@ async function jsonFetch<T = any>(path: string, opts: RequestInit = {}): Promise
     throw new Error(msg);
   }
   return res.json();
+}
+
+function notifyExpiredSession(res: Response, path: string) {
+  if (ECHO_AUTH_ENABLED && res.status === 401 && path !== "/api/auth/login") {
+    window.dispatchEvent(new Event(ECHO_AUTH_REQUIRED_EVENT));
+  }
 }
 
 export interface ChatMsgInput {
@@ -42,6 +51,7 @@ export async function chatStream(
     signal: opts.signal,
   });
   if (!res.ok) {
+    notifyExpiredSession(res, "/api/chat");
     let msg = `请求失败 (${res.status})`;
     try {
       const j = await res.json();
@@ -65,6 +75,9 @@ export const api = {
   base: API_BASE,
 
   health: () => fetch(`${API_BASE}/api/health`).then((r) => r.json()),
+  getSession: () => jsonFetch<{ authenticated: boolean }>("/api/auth/session", { cache: "no-store" }),
+  login: (password: string) => jsonFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) }),
+  logout: () => jsonFetch("/api/auth/logout", { method: "POST" }),
 
   // 聊天历史
   getHistory: () => jsonFetch<{ messages: any[] }>("/api/chat/history"),

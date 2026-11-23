@@ -1,6 +1,7 @@
 // echo 轻量后端入口：Fastify，零重型依赖，适合 4 GiB 内存常开
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { installAuth } from "./src/auth.js";
 import { ensureDataTree, DATA_DIR } from "./src/storage.js";
 import chatRoute from "./src/routes/chat.js";
 import memoryRoute from "./src/routes/memory.js";
@@ -13,12 +14,15 @@ const app = Fastify({
   bodyLimit: 4 * 1024 * 1024,
 });
 
+const secured = installAuth(app);
 await ensureDataTree(DATA_DIR);
 
-await app.register(cors, {
-  origin: true, // 允许任意来源（自己的手机/电脑访问自己的后端）
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-});
+if (!secured) {
+  await app.register(cors, {
+    origin: true, // 兼容旧的直连前端
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  });
+}
 
 // 健康检查
 app.get("/api/health", async () => ({ ok: true, ts: Date.now() }));

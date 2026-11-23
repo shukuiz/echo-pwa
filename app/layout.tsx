@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { StoreProvider } from "@/lib/store";
 import PWARegister from "@/components/PWARegister";
+import AuthGate from "@/components/AuthGate";
 
 export const metadata: Metadata = {
   title: "echo",
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <StoreProvider>{children}</StoreProvider>
+        <AuthGate><StoreProvider>{children}</StoreProvider></AuthGate>
         <PWARegister />
       </body>
     </html>

@@ -1,5 +1,11 @@
 # echo 后端（P0）
 
+## 带登录保护的部署
+
+有公网入口的部署应先启用登录保护。后端配置写入服务自己的 `.env`，不要提交文件。将 `ECHO_HOST` 设为 `127.0.0.1`，把 `ECHO_AUTH_ORIGIN` 设为用户打开 Echo 的 HTTPS 来源（只含协议和主机，不要末尾斜杠），并为 `ECHO_AUTH_PASSWORD` 设置单独生成的至少 20 个字符的密码。Node.js 22 可用 `node --env-file=.env server.js` 加载该文件。
+
+构建前端时设 `NEXT_PUBLIC_ECHO_AUTH=1`。前端托管配置把同源的 `/api/*` 转发到后端 HTTPS 入口，保留路径、Cookie、Set-Cookie 和浏览器 Origin。登录密码与模型 API Key 应分别配置。启用登录时，旧版的跨域直连关闭，私有 API 不缓存，后端重启会要求重新登录。
+
 轻量后端，适配 4 GiB 内存的 Altare 常开。提供四个接口：聊天转发、记忆读写、文件读写、工具调用（预留）。数据全部落盘为纯文本/JSON，无数据库。
 
 ## 目录结构

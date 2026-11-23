@@ -1,5 +1,5 @@
 // echo 简易 Service Worker：页面走网络优先，静态资源走缓存优先
-const CACHE = "echo-v3";
+const CACHE = "echo-v4";
 const SHELL = ["/", "/chat", "/workbench", "/memory", "/reminders", "/settings", "/files", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
@@ -12,7 +12,8 @@ self.addEventListener("activate", (e) => {
 });
 self.addEventListener("fetch", (e) => {
   const req = e.request;
-  if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
+  const url = new URL(req.url);
+  if (req.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
   if (req.mode === "navigate") {
     e.respondWith(
       fetch(req)

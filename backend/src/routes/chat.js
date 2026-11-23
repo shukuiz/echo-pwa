@@ -75,7 +75,7 @@ export default async function chatRoute(app) {
 
     reply.raw.writeHead(200, {
       "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
+      "Cache-Control": "no-store, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
