@@ -5,9 +5,13 @@ const API_BASE = (process.env.NEXT_PUBLIC_ECHO_API || "http://localhost:8787").r
 export type ApiRole = "user" | "echo";
 
 async function jsonFetch<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers = new Headers(opts.headers);
+  if (opts.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     ...opts,
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    headers,
   });
   if (!res.ok) {
     let msg = `请求失败 (${res.status})`;

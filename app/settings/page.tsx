@@ -217,7 +217,10 @@ export default function SettingsPage() {
         <section>
           <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">模型</h2>
           <div className="block-white space-y-2 rounded-[26px] p-4">
-            <p className="text-[13px] text-mute">拉取模型后点名称即切换，也可以搜索过滤</p>
+            <p className="break-all text-[13px] text-ink/80">
+              当前聊天模型：<span className="font-mono font-semibold">{settings.model}</span>
+            </p>
+            <p className="text-[13px] text-mute">拉取后直接点列表里的模型即可切换。列表里找不到时，再手动添加。</p>
             <div className="flex gap-2">
               <input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型…" autoCapitalize="off" className="field" />
               <button onClick={fetchModels} disabled={loadingModels} className="btn-ghost shrink-0 px-4 text-[15px] disabled:opacity-50">
@@ -227,7 +230,7 @@ export default function SettingsPage() {
             <div className="flex flex-wrap gap-2">
               {visibleModels.map((md) => (
                 <span key={md} className={`flex items-center gap-1 rounded-capsule py-1.5 pl-3 pr-1.5 font-mono text-[13px] ${md === settings.model ? "bg-sakura/35 text-rose" : "bg-fog text-ink/80"}`}>
-                  <button onClick={() => upd({ model: md })}>{md}</button>
+                  <button aria-pressed={md === settings.model} onClick={() => upd({ model: md })}>{md}</button>
                   <button
                     aria-label={`移除 ${md}`}
                     onClick={() => {
@@ -254,7 +257,7 @@ export default function SettingsPage() {
                 }}
                 className="btn-ghost shrink-0 px-4 text-[15px]"
               >
-                添加
+                手动添加
               </button>
             </div>
           </div>
