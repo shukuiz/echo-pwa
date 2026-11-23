@@ -51,7 +51,9 @@ export function installAuth(app, env = process.env) {
       return reply.code(403).send({ message: "请求来源不受信任" });
     }
     if (path === "/api/health" || path === "/api/auth/session" || path === "/api/auth/login") return;
-    if (!authenticated(req)) return reply.code(401).send({ message: "请登录 Echo" });
+    if (!authenticated(req)) {
+      return reply.code(401).send({ error: "echo_login_required", message: "请登录 Echo" });
+    }
   });
 
   app.get("/api/auth/session", async (req) => ({ authenticated: authenticated(req) }));

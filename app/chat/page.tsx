@@ -100,7 +100,7 @@ function Chat() {
   async function doChat(history: Msg[], errId?: string) {
     const echoId = errId ?? uid();
     if (errId) {
-      patch(errId, { text: "", status: "streaming", at: Date.now() });
+      patch(errId, { text: "", status: "streaming", errorMessage: undefined, at: Date.now() });
     } else {
       set("messages", (ms) => [...ms, { id: echoId, role: "echo", text: "", status: "streaming", at: Date.now() }]);
     }
@@ -124,7 +124,10 @@ function Chat() {
       patch(echoId, { status: "done" });
     } catch (e) {
       const aborted = (e as Error)?.name === "AbortError";
-      patch(echoId, { status: aborted ? "stopped" : "error" });
+      patch(echoId, {
+        status: aborted ? "stopped" : "error",
+        errorMessage: aborted ? undefined : (e as Error).message,
+      });
     } finally {
       setWorking(null);
       setStreamingId(null);
@@ -421,6 +424,7 @@ function Bubble({ m, quiet, onTap, onRetry }: { m: Msg; quiet: boolean; onTap: (
         <Avatar />
         <div className="rounded-[22px] rounded-bl-md border border-rose/40 bg-tile px-4 py-2.5">
           <p className="text-[15px] text-rose">回复失败了 (；´д｀)</p>
+          {m.errorMessage && <p className="max-w-[65vw] break-words text-sm text-rose">{m.errorMessage}</p>}
           <button onClick={onRetry} className="press mt-1.5 flex items-center gap-1.5 rounded-capsule bg-rose/10 px-3 py-1.5 text-[15px] text-rose"><IconRetry size={16} /> 重试</button>
         </div>
       </div>

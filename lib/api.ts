@@ -15,23 +15,18 @@ async function jsonFetch<T = any>(path: string, opts: RequestInit = {}): Promise
     ...opts,
     headers,
   });
-  if (!res.ok) {
-    notifyExpiredSession(res, path);
-    let msg = `请求失败 (${res.status})`;
-    try {
-      const j = await res.json();
-      if (j?.message) msg = j.message;
-      if (j?.error === "no_key") msg = "后端还没设置 API Key，请先到设置页保存";
-    } catch {}
-    throw new Error(msg);
-  }
+  if (!res.ok) throw await requestError(res);
   return res.json();
 }
 
-function notifyExpiredSession(res: Response, path: string) {
-  if (ECHO_AUTH_ENABLED && res.status === 401 && path !== "/api/auth/login") {
+async function requestError(res: Response) {
+  const data = await res.json().catch(() => null);
+  if (ECHO_AUTH_ENABLED && res.status === 401 && data?.error === "echo_login_required") {
     window.dispatchEvent(new Event(ECHO_AUTH_REQUIRED_EVENT));
   }
+  if (data?.error === "no_key") return new Error("后端还没设置 API Key，请先到设置页保存");
+  const message = typeof data?.message === "string" && data.message;
+  return new Error(message || `请求失败 (${res.status})`);
 }
 
 export interface ChatMsgInput {
@@ -50,16 +45,7 @@ export async function chatStream(
     body: JSON.stringify({ messages, model: opts.model }),
     signal: opts.signal,
   });
-  if (!res.ok) {
-    notifyExpiredSession(res, "/api/chat");
-    let msg = `请求失败 (${res.status})`;
-    try {
-      const j = await res.json();
-      if (j?.message) msg = j.message;
-      if (j?.error === "no_key") msg = "后端还没设置 API Key，请先到设置页保存";
-    } catch {}
-    throw new Error(msg);
-  }
+  if (!res.ok) throw await requestError(res);
   const reader = res.body?.getReader();
   if (!reader) throw new Error("无响应流");
   const dec = new TextDecoder();

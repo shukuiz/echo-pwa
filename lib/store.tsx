@@ -17,6 +17,7 @@ export type Msg = {
   role: Role;
   text: string;
   status?: "streaming" | "done" | "error" | "stopped";
+  errorMessage?: string;
   at: number;
   card?: Card;
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
