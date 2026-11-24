@@ -5,6 +5,9 @@ export const ECHO_AUTH_REQUIRED_EVENT = "echo-auth-required";
 const API_BASE = ECHO_AUTH_ENABLED ? "" : (process.env.NEXT_PUBLIC_ECHO_API || "http://localhost:8787").replace(/\/+$/, "");
 
 export type ApiRole = "user" | "echo";
+export type MemoryModelKind = "embedding" | "rerank";
+export type MemoryModelSettings = { url: string; model: string; hasKey: boolean };
+type MemoryModelConfig = Record<MemoryModelKind, MemoryModelSettings>;
 
 async function jsonFetch<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers = new Headers(opts.headers);
@@ -81,6 +84,11 @@ export const api = {
   getModels: (q?: string) => jsonFetch<{ models: string[]; error?: string; message?: string }>(`/api/models${q ? `?q=${encodeURIComponent(q)}` : ""}`),
 
   // 记忆
+  getMemoryModels: () => jsonFetch<MemoryModelConfig>("/api/settings/memory-models", { cache: "no-store" }),
+  saveMemoryModel: (kind: MemoryModelKind, settings: { url: string; model: string; apiKey?: string }) =>
+    jsonFetch<MemoryModelConfig>(`/api/settings/memory-models/${kind}`, { method: "PUT", body: JSON.stringify(settings) }),
+  testMemoryModel: (kind: MemoryModelKind) =>
+    jsonFetch<{ ok: boolean; message: string }>(`/api/settings/memory-models/${kind}/test`, { method: "POST" }),
   getMemory: () => jsonFetch<{ memory: any[]; reminders: any[] }>("/api/memory"),
   addMemory: (m: { tab: string; title?: string; text: string; pinned?: boolean }) =>
     jsonFetch("/api/memory", { method: "POST", body: JSON.stringify(m) }),
