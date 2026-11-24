@@ -5,6 +5,7 @@ import { PageShell, Segmented, Toggle } from "@/components/Chrome";
 import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconMoon, IconMusic, IconSun, IconWand, IconWifi } from "@/components/Icons";
 import { Hand, Settings, useStore } from "@/lib/store";
 import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
+import MemoryModelSettingsSection from "./MemoryModelSettings";
 
 type TestState = { status: "idle" | "testing" | "ok" | "fail"; msg?: string };
 
@@ -433,6 +434,8 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+
+        <MemoryModelSettingsSection />
 
         {/* MCP 服务 */}
         <section>
