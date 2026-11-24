@@ -187,7 +187,7 @@ export default function BeautyPage() {
         <Card icon="spark" title="动效">
           <Seg label="动效" value={b.motion} opts={[[1, "水波流动"], [0, "静止省电"]]} onChange={(v) => setB({ motion: v as 0 | 1 })} />
           <p className="hint">
-            {rm ? "系统开了「减弱动态效果」，所以现在用的是普通毛玻璃，不跑水波。" : noGL ? "这台设备不支持 WebGL，现在用的是普通毛玻璃。" : "关掉玻璃或设备不支持 WebGL 时，自动换成普通毛玻璃，不影响阅读"}
+            {rm ? "系统开了「减弱动态效果」，所以现在用的是普通毛玻璃，不跑水波。" : noGL ? "当前设备使用低开销的毛玻璃和高光效果。" : "关掉玻璃或设备不支持 WebGL 时，自动换成普通毛玻璃，不影响阅读"}
           </p>
         </Card>
 

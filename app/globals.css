@@ -3,6 +3,8 @@
 @tailwind utilities;
 
 :root {
+  --accent: 180 99 122;
+  --accent-ink: #fff;
   --fog: 226 224 223;
   --cream: 250 247 242;
   --tile: 255 255 255;
@@ -45,9 +47,19 @@ input, textarea, select { font-size: 16px; }
   .capsule { @apply rounded-capsule; }
   .press { @apply transition active:scale-[0.96]; }
   .field { @apply w-full bg-cream text-ink text-input rounded-2xl px-4 py-3 outline-none border border-line focus:border-sakura; }
-  .btn-primary { @apply bg-rose text-white rounded-capsule px-5 py-2.5 press font-medium; }
+  .btn-primary { @apply bg-rose text-[color:var(--accent-ink)] rounded-capsule px-5 py-2.5 press font-medium; }
   .btn-ghost { @apply glass rounded-capsule px-5 py-2.5 press; }
 }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 12px); }
+
+.settings-drawer summary::-webkit-details-marker { display: none; }
+.settings-drawer[open] > summary .drawer-chevron { transform: rotate(180deg); }
+.model-list-scroll {
+  max-height: min(18rem, 38vh);
+  max-height: min(18rem, 38dvh);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}

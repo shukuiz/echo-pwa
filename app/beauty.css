@@ -248,3 +248,11 @@ textarea.fld { resize: none; height: 84px; line-height: 1.5; }
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
 .gstick .wbar { margin-top: 2px; }
+
+.chat-shell {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--chat-viewport-top, 0px);
+  height: 100dvh;
+  height: var(--chat-viewport-height, 100dvh);
+}

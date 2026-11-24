@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { IconBack } from "./Icons";
+import { IconBack, IconChevron } from "./Icons";
 import { useStore } from "@/lib/store";
 import { WallScreen } from "./glass/Wall";
 
@@ -43,14 +43,14 @@ export function StatusBar() {
 }
 
 /** 底部可点击 Home 指示条 */
-export function HomeIndicator() {
+export function HomeIndicator({ inline = false }: { inline?: boolean } = {}) {
   const router = useRouter();
   return (
     <button
       aria-label="回到桌面"
       onClick={() => router.push("/")}
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 4px)" }}
-      className="fixed inset-x-0 bottom-0 z-40 mx-auto flex w-full max-w-[430px] items-end justify-center pt-1.5"
+      className={`z-40 mx-auto flex w-full max-w-[430px] items-end justify-center pt-1.5 ${inline ? "shrink-0" : "fixed inset-x-0 bottom-0"}`}
     >
       <span className="mb-1 h-[5px] w-[134px] rounded-capsule bg-ink/70 transition active:scale-x-90 active:bg-rose" />
     </button>
@@ -110,14 +110,32 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
   const { settings } = useStore();
   const [time, setTime] = useState("");
   useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const root = document.documentElement.style;
+    const resize = () => {
+      root.setProperty("--chat-viewport-height", viewport.height + "px");
+      root.setProperty("--chat-viewport-top", viewport.offsetTop + "px");
+    };
+    resize();
+    viewport.addEventListener("resize", resize);
+    viewport.addEventListener("scroll", resize);
+    return () => {
+      viewport.removeEventListener("resize", resize);
+      viewport.removeEventListener("scroll", resize);
+      root.removeProperty("--chat-viewport-height");
+      root.removeProperty("--chat-viewport-top");
+    };
+  }, []);
+  useEffect(() => {
     const tick = () => { const d = new Date(); setTime(`${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`); };
     tick();
     const t = setInterval(tick, 15_000);
     return () => clearInterval(t);
   }, []);
   return (
-    <WallScreen gl={false} className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col">
-      <div className="gstick sticky top-0 z-30 pt-[env(safe-area-inset-top)]">
+    <WallScreen gl={false} fixed className="chat-shell mx-auto flex w-full max-w-[430px] flex-col">
+      <div className="gstick relative z-30 shrink-0 pt-[env(safe-area-inset-top)]">
         {settings.showStatusBar !== false && (
           <div className="flex h-11 items-center justify-between px-7 text-[15px] font-semibold" data-onwp aria-hidden>
             <span className="tabular-nums">{time}</span>
@@ -133,9 +151,9 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
           {right}
         </div>
       </div>
-      <main className="flex-1 px-4 pb-14">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-3">{children}</main>
       {footer}
-      <HomeIndicator />
+      <HomeIndicator inline />
     </WallScreen>
   );
 }
@@ -208,3 +226,16 @@ export function Segmented<T extends string>({
     </div>
   );
 }
+
+export function SettingsDrawer({ title, open, children }: { title: string; open?: boolean; children: React.ReactNode }) {
+  return (
+    <details open={open} className="settings-drawer block-white rounded-[24px]">
+      <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 font-semibold">
+        {title}
+        <IconChevron size={18} className="drawer-chevron shrink-0 text-mute" />
+      </summary>
+      <div className="border-t border-line p-4">{children}</div>
+    </details>
+  );
+}
+

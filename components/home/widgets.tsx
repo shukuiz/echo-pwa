@@ -183,7 +183,7 @@ function Echo({ w }: { w: WidgetItem }) {
     <div className="wpad" style={{ padding: "14px 16px" }}>
       {head}
       <p className="clamp2" style={{ fontSize: 14.5, lineHeight: 1.45, marginTop: 10 }}>{msg}</p>
-      <div className="rose" style={{ fontSize: 12.5, marginTop: "auto" }}>点我回她 ›</div>
+      <div className="rose" style={{ fontSize: 12.5, marginTop: "auto" }}>打开聊天 ›</div>
     </div>
   );
   const recent = messages.filter((m) => m.text).slice(-4);

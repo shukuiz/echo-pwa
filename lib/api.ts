@@ -40,23 +40,39 @@ export interface ChatMsgInput {
 /** 流式聊天：onDelta 每次收到增量文本；signal 用于停止生成 */
 export async function chatStream(
   messages: ChatMsgInput[],
-  opts: { model?: string; signal?: AbortSignal; onDelta: (text: string) => void }
+  opts: { model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void }
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, model: opts.model }),
+    body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson" }),
     signal: opts.signal,
   });
   if (!res.ok) throw await requestError(res);
   const reader = res.body?.getReader();
   if (!reader) throw new Error("无响应流");
   const dec = new TextDecoder();
+  const structured = res.headers.get("content-type")?.includes("application/x-ndjson");
+  let buffer = "";
+  const dispatch = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === "reasoning") opts.onReasoning?.(event.text);
+    if (event.type === "content") opts.onDelta(event.text);
+  };
   while (true) {
     const { done, value } = await reader.read();
+    const chunk = done ? dec.decode() : dec.decode(value, { stream: true });
+    if (structured) {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      lines.forEach(dispatch);
+      if (done) dispatch(buffer);
+    } else if (chunk) {
+      opts.onDelta(chunk);
+    }
     if (done) break;
-    const chunk = dec.decode(value, { stream: true });
-    if (chunk) opts.onDelta(chunk);
   }
 }
 
@@ -87,6 +103,8 @@ export const api = {
   getMemoryModels: () => jsonFetch<MemoryModelConfig>("/api/settings/memory-models", { cache: "no-store" }),
   saveMemoryModel: (kind: MemoryModelKind, settings: { url: string; model: string; apiKey?: string }) =>
     jsonFetch<MemoryModelConfig>(`/api/settings/memory-models/${kind}`, { method: "PUT", body: JSON.stringify(settings) }),
+  listMemoryModels: (kind: MemoryModelKind, settings: { url: string; apiKey?: string }) =>
+    jsonFetch<{ models: string[] }>(`/api/settings/memory-models/${kind}/models`, { method: "POST", body: JSON.stringify(settings) }),
   testMemoryModel: (kind: MemoryModelKind) =>
     jsonFetch<{ ok: boolean; message: string }>(`/api/settings/memory-models/${kind}/test`, { method: "POST" }),
   getMemory: () => jsonFetch<{ memory: any[]; reminders: any[] }>("/api/memory"),

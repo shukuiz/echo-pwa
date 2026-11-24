@@ -123,8 +123,8 @@ export function planReply(input: string): MockPlan {
     kind: "reply",
     text: pick(replies),
     think: memHit
-      ? { text: "她提到了状态和喜好，翻一下记忆本：喜欢 wave to earth，奶茶三分糖去冰。语气放软，别说教。", tags: [{ kind: "memory", label: "想起了：你喜欢 wave to earth" }] }
-      : { text: "先接住她的话，简短回应，不急着给建议。", tags: [] },
+      ? { text: "你提到了状态和喜好，翻一下记忆本：喜欢 wave to earth，奶茶三分糖去冰。语气放软，别说教。", tags: [{ kind: "memory", label: "想起了：你喜欢 wave to earth" }] }
+      : { text: "先回应用户的话，简短回应，不急着给建议。", tags: [] },
   };
 }
 

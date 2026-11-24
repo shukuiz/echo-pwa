@@ -1,5 +1,5 @@
 // echo 简易 Service Worker：页面走网络优先，静态资源走缓存优先
-const CACHE = "echo-v5";
+const CACHE = "echo-v6";
 const SHELL = ["/", "/chat", "/beauty", "/workbench", "/memory", "/reminders", "/settings", "/files", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

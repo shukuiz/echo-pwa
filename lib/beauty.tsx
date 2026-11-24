@@ -31,6 +31,7 @@ export type HomeItem = WidgetItem | AppItem;
 export type Beauty = {
   v: 1;
   theme: ThemeKind;
+  accent: string;
   mat: "frost" | "solid";
   tint: string;
   me: string;
@@ -116,8 +117,10 @@ const seedItems = (): HomeItem[] => [
 
 const reducedMotion = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
+export const DEFAULT_ACCENT = "#b4637a";
+
 export const defaultBeauty = (): Beauty => ({
-  v: 1, theme: "glass", mat: "frost", tint: "#f3f6fa", me: "#ffb6c8", bubMode: "glass", font: "sys", songOrig: false,
+  v: 1, theme: "glass", accent: DEFAULT_ACCENT, mat: "frost", tint: "#f3f6fa", me: "#ffb6c8", bubMode: "glass", font: "sys", songOrig: false,
   preset: "mist", icon: "#f7f8fb", iconA: 88, wA: 100, P: { ...PRESETS.mist }, motion: reducedMotion() ? 0 : 1, wp: "default",
   inkMode: "auto", inkColor: "#ffffff", meInkMode: "follow", meInkColor: "#3a2630",
   items: seedItems(), removed: [],
@@ -170,6 +173,7 @@ export function migrateBeauty(raw: unknown): Beauty {
     v: 1,
     theme: oneOf(r.theme, ["glass", "real"] as const, d.theme),
     mat: oneOf(r.mat, ["frost", "solid"] as const, d.mat),
+    accent: isHex(r.accent) ? r.accent : d.accent,
     tint: isHex(r.tint) ? r.tint : d.tint,
     me: isHex(r.me) ? r.me : d.me,
     bubMode: oneOf(r.bubMode, ["glass", "tint"] as const, d.bubMode),
@@ -242,6 +246,17 @@ export function BeautyProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("pagehide", flush);
     return () => window.removeEventListener("pagehide", flush);
   }, [ready]);
+  useEffect(() => {
+    const root = document.documentElement.style;
+    const rgb = b.accent.slice(1).match(/.{2}/g)?.map((channel) => parseInt(channel, 16));
+    if (!rgb) return;
+    root.setProperty("--accent", rgb.join(" "));
+    const luminance = rgb.reduce((sum, channel, i) => {
+      const srgb = channel / 255;
+      return sum + [0.2126, 0.7152, 0.0722][i] * (srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4);
+    }, 0);
+    root.setProperty("--accent-ink", luminance > 0.179 ? "#171417" : "#fff");
+  }, [b.accent]);
   const bRef = useRef(b);
   bRef.current = b;
 

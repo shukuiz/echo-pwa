@@ -1,4 +1,4 @@
-// 聊天转发：拼 System Prompt + 最近 20 条消息，流式请求 OpenAI 兼容接口并原样透传
+// 聊天转发：拼 System Prompt + 最近 20 条消息，流式转发 OpenAI 兼容接口的正文和推理字段
 import { getConfig, authHeaders } from "../config.js";
 import { buildSystemPrompt } from "../prompt.js";
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
@@ -31,7 +31,7 @@ export default async function chatRoute(app) {
   });
 
   // 流式聊天。请求体：{ messages: [{role,text}], model? }
-  // 响应：text/plain 流，逐段输出模型增量文本（前端原样逐字渲染）
+  // 新版客户端接收 NDJSON，旧版继续接收纯文本。
   app.post("/api/chat", async (req, reply) => {
     const cfg = await getConfig();
     if (!cfg.apiKey) {
@@ -45,6 +45,7 @@ export default async function chatRoute(app) {
     }
 
     const body = req.body || {};
+    const structured = body.streamFormat === "ndjson";
     const incoming = Array.isArray(body.messages) ? body.messages : [];
     const model = body.model || cfg.model;
 
@@ -108,20 +109,28 @@ export default async function chatRoute(app) {
     const sendHeaders = () => {
       if (headersSent) return;
       headersSent = true;
+      reply.hijack();
       reply.raw.writeHead(200, {
-        "Content-Type": "text/plain; charset=utf-8",
+        ...reply.getHeaders(),
+        "Content-Type": structured ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8",
         "Cache-Control": "no-store, no-transform",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });
     };
 
-    // 解析 SSE，提取 delta 文本并原样透传给前端
+    // 从 SSE 中读取已公开的正文和推理增量。
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let reasoning = "";
     let streamError = "";
+
+    const writeDelta = (type, text) => {
+      sendHeaders();
+      reply.raw.write(structured ? JSON.stringify({ type, text }) + "\n" : text);
+    };
 
     const pushDelta = (data) => {
       // data 为单个 SSE 的 data: 载荷
@@ -137,11 +146,15 @@ export default async function chatRoute(app) {
         streamError = upstreamErrorMessage(JSON.stringify(json)) || "模型接口在生成中途出错";
         return;
       }
-      const delta = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content ?? "";
-      if (delta) {
-        sendHeaders();
-        fullText += delta;
-        reply.raw.write(delta);
+      const event = json.choices?.[0]?.delta ?? json.choices?.[0]?.message;
+      const thought = event?.reasoning_content ?? event?.reasoning;
+      if (typeof thought === "string" && thought) {
+        reasoning += thought;
+        if (structured) writeDelta("reasoning", thought);
+      }
+      if (typeof event?.content === "string" && event.content) {
+        fullText += event.content;
+        writeDelta("content", event.content);
       }
     };
 
@@ -159,6 +172,7 @@ export default async function chatRoute(app) {
           pushDelta(t.slice(5).trim());
         }
       }
+      buffer += decoder.decode();
       if (!streamError && buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
     } catch (e) {
       // 上游中断或前端停止：保留已收到的内容
@@ -183,10 +197,10 @@ export default async function chatRoute(app) {
 
     // 落盘：保存助手完整回复
     try {
-      if (fullText) {
+      if (fullText || reasoning) {
         const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
         const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
-        chat.messages.push({ id: uid(), role: "echo", text: fullText, at: Date.now(), status });
+        chat.messages.push({ id: uid(), role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), at: Date.now(), status });
         await writeJSON(paths.chat(DATA_DIR), chat);
       }
     } catch {}

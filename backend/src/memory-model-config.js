@@ -88,3 +88,35 @@ export async function saveMemoryModel(kind, body, env = process.env) {
   writes = operation.catch(() => {});
   return operation;
 }
+
+export async function listMemoryModels(kind, body, env = process.env) {
+  let endpoint;
+  try {
+    if (typeof body?.url !== "string" || body.url.length > 2048) throw new Error();
+    endpoint = normalizeUrl(body.url.trim());
+  } catch {
+    throw new RangeError("请输入完整的 HTTPS 模型端点，或使用本机 HTTP 地址");
+  }
+  const key = body.apiKey;
+  if (key !== undefined && (typeof key !== "string" || key.length > 4096 || /[\r\n]/.test(key))) {
+    throw new RangeError("API Key 格式不正确");
+  }
+  const saved = (await readMemoryModels(env))[kind];
+  const token = key?.trim() ?? (saved?.url === endpoint ? saved.key : "");
+  const url = new URL(endpoint);
+  const prefix = url.pathname.replace(/\/+$/, "");
+  if (!/\/(embeddings|rerank)$/.test(prefix)) {
+    throw new RangeError("请填写以 /embeddings 或 /rerank 结尾的端点，或手动输入模型名");
+  }
+  url.pathname = prefix.replace(/\/(embeddings|rerank)$/, "/models");
+  const response = await fetch(url, {
+    headers: token ? { Authorization: "Bearer " + token } : {},
+    redirect: "error",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new Error("模型列表接口返回 " + response.status + "，可手动填写模型名");
+  const payload = await response.json();
+  const items = payload?.data ?? payload?.models ?? payload;
+  const ids = Array.isArray(items) ? items.map((item) => typeof item === "string" ? item : item?.id) : [];
+  return [...new Set(ids.filter((id) => typeof id === "string" && id.trim() && id.length <= 200))];
+}

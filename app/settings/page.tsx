@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PageShell, Segmented, Toggle } from "@/components/Chrome";
-import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconMoon, IconMusic, IconSun, IconWand, IconWifi } from "@/components/Icons";
+import { PageShell, Segmented, SettingsDrawer, Toggle } from "@/components/Chrome";
+import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconWand } from "@/components/Icons";
 import { Hand, Settings, useStore } from "@/lib/store";
 import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
+import { DEFAULT_ACCENT, useBeauty } from "@/lib/beauty";
 import MemoryModelSettingsSection from "./MemoryModelSettings";
 
 type TestState = { status: "idle" | "testing" | "ok" | "fail"; msg?: string };
@@ -39,6 +40,7 @@ const LOCAL_KEY_PREF = "echo-store-key-locally";
 
 export default function SettingsPage() {
   const { settings, set, theme, toast } = useStore();
+  const { b, setB } = useBeauty();
   const [showKey, setShowKey] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [keyMask, setKeyMask] = useState("");
@@ -114,11 +116,14 @@ export default function SettingsPage() {
   async function submitPreset() {
     if (!presetForm) return;
     const { id, name, url, apiKey } = presetForm;
-    if (!/^https?:\/\//i.test(url.trim())) return toast("接口地址需以 http(s):// 开头");
+    if (!name.trim()) return toast("请输入预设名称");
+    const saved = settings.presets.find((preset) => preset.id === id);
+    const changedUrl = url.trim() !== saved?.url;
+    if (changedUrl && !/^https?:\/\//i.test(url.trim())) return toast("接口地址需以 http(s):// 开头");
     setSavingPreset(true);
     try {
       const cfg = id
-        ? await api.updatePreset(id, { name, url, ...(apiKey.trim() ? { apiKey } : {}) })
+        ? await api.updatePreset(id, { name: name.trim(), ...(changedUrl ? { url: url.trim() } : {}), ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) })
         : await api.createPreset({ name, url, apiKey });
       applyCfg(cfg);
       setPresetForm(null);
@@ -225,13 +230,8 @@ export default function SettingsPage() {
   return (
     <PageShell title="设置">
       <div className="space-y-5 pt-1">
-        {/* API 入口 */}
-        <section>
-          <div className="mb-2 flex items-center justify-between px-1">
-            <h2 className="text-[15px] font-semibold text-mute">API 入口</h2>
-            <span className="rounded-capsule bg-sakura/45 px-2.5 py-0.5 text-[12px] font-medium text-rose">常开</span>
-          </div>
-          <div className="block-white space-y-3 rounded-[26px] p-4">
+        <SettingsDrawer title="API 入口" open>
+          <div className="space-y-3">
             <div>
               <span className="mb-1.5 block text-[14px] text-mute">接口类型</span>
               <Segmented<string>
@@ -275,7 +275,7 @@ export default function SettingsPage() {
                       <p className="truncate font-mono text-[12px] text-mute">{p.url}</p>
                       <p className="text-[12px] text-mute">{p.hasKey ? `Key ${p.keyMask}` : "未填 Key"}</p>
                     </button>
-                    <button onClick={() => setPresetForm({ id: p.id, name: p.name, url: p.url, apiKey: "" })} className="btn-ghost shrink-0 px-3 py-1.5 text-[13px]">编辑</button>
+                    <button onClick={() => setPresetForm({ id: p.id, name: p.name, url: p.url, apiKey: "" })} className="btn-ghost min-h-10 shrink-0 px-3 text-[13px]">编辑预设</button>
                     <button aria-label={`删除 ${p.name}`} onClick={() => removePreset(p.id, p.name)} className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-mute">
                       <IconClose size={14} />
                     </button>
@@ -284,7 +284,9 @@ export default function SettingsPage() {
                 {presetForm ? (
                   <div className="space-y-2 rounded-2xl bg-fog/60 p-3">
                     <p className="text-[14px] font-medium">{presetForm.id ? "编辑预设" : "新建预设"}</p>
-                    <input value={presetForm.name} onChange={(e) => setPresetForm({ ...presetForm, name: e.target.value })} placeholder="名字，如 Serein" autoCapitalize="off" className="field" />
+                    <label className="block space-y-1 text-[13px] text-mute">预设名称
+                      <input maxLength={40} value={presetForm.name} onChange={(e) => setPresetForm({ ...presetForm, name: e.target.value })} placeholder="例如 Serein" autoCapitalize="off" className="field" />
+                    </label>
                     <input value={presetForm.url} onChange={(e) => setPresetForm({ ...presetForm, url: e.target.value })} placeholder="https://example.com/v1" inputMode="url" autoCapitalize="off" className="field font-mono" />
                     <input
                       type="password"
@@ -296,7 +298,7 @@ export default function SettingsPage() {
                     />
                     <div className="flex gap-2">
                       <button onClick={() => setPresetForm(null)} className="btn-ghost flex-1 py-2.5 text-[15px]">取消</button>
-                      <button onClick={submitPreset} disabled={savingPreset || !presetForm.url.trim()} className="btn-primary flex-1 py-2.5 text-[15px] disabled:opacity-50">
+                      <button onClick={submitPreset} disabled={savingPreset || !presetForm.name.trim() || (!presetForm.id && !presetForm.url.trim())} className="btn-primary flex-1 py-2.5 text-[15px] disabled:opacity-50">
                         {savingPreset ? "保存中…" : "保存预设"}
                       </button>
                     </div>
@@ -348,13 +350,21 @@ export default function SettingsPage() {
                 />
               </label>
             )}
+            <div className="space-y-2 border-t border-line pt-3">
+              <button onClick={testConnection} disabled={test.status === "testing"} className="btn-primary flex w-full items-center justify-center gap-2 py-3.5 text-[16px] disabled:opacity-70">
+                {test.status === "testing" ? (<><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> 正在测试…</>) : "测试连接"}
+              </button>
+              {(test.status === "ok" || test.status === "fail") && (
+                <p className={`flex animate-pop items-center gap-2 rounded-2xl px-4 py-3 text-[15px] ${test.status === "ok" ? "bg-sakura/30 text-rose" : "bg-rose/10 text-rose"}`}>
+                  {test.status === "ok" ? <IconCheck size={18} /> : <IconClose size={18} />} {test.msg}
+                </p>
+              )}
+            </div>
           </div>
-        </section>
+        </SettingsDrawer>
 
-        {/* 模型 */}
-        <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">模型</h2>
-          <div className="block-white space-y-2 rounded-[26px] p-4">
+        <SettingsDrawer title="聊天模型">
+          <div className="space-y-2">
             <p className="break-all text-[13px] text-ink/80">
               当前聊天模型：<span className="font-mono font-semibold">{settings.model}</span>
             </p>
@@ -365,10 +375,10 @@ export default function SettingsPage() {
                 {loadingModels ? "拉取中…" : "拉取模型"}
               </button>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div id="chat-model-list" aria-label="聊天模型列表" tabIndex={showAllModels ? 0 : undefined} className={`flex flex-wrap content-start gap-2 ${showAllModels ? "model-list-scroll" : ""}`}>
               {visibleModels.map((md) => (
-                <span key={md} className={`flex items-center gap-1 rounded-capsule py-1.5 pl-3 pr-1.5 font-mono text-[13px] ${md === settings.model ? "bg-sakura/35 text-rose" : "bg-fog text-ink/80"}`}>
-                  <button aria-pressed={md === settings.model} onClick={() => upd({ model: md })}>{md}</button>
+                <span key={md} className={`flex min-w-0 max-w-full items-center gap-1 rounded-capsule py-1.5 pl-3 pr-1.5 font-mono text-[13px] ${md === settings.model ? "bg-sakura/35 text-rose" : "bg-fog text-ink/80"}`}>
+                  <button aria-pressed={md === settings.model} className="min-w-0 break-all text-left" onClick={() => upd({ model: md })}>{md}</button>
                   <button
                     aria-label={`移除 ${md}`}
                     onClick={() => {
@@ -376,7 +386,7 @@ export default function SettingsPage() {
                       const rest = settings.models.filter((x) => x !== md);
                       upd({ models: rest, model: settings.model === md ? rest[0] : settings.model });
                     }}
-                    className="grid h-5 w-5 place-items-center rounded-full text-mute"
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-mute"
                   >
                     <IconClose size={12} />
                   </button>
@@ -385,7 +395,7 @@ export default function SettingsPage() {
               {visibleModels.length === 0 && <p className="text-[13px] text-mute">没有匹配的模型</p>}
             </div>
             {matchedModels.length > MODEL_COLLAPSE && (
-              <button onClick={() => setShowAllModels((v) => !v)} className="w-full rounded-2xl py-2 text-[14px] text-rose">
+              <button aria-expanded={showAllModels} aria-controls="chat-model-list" onClick={() => setShowAllModels((v) => !v)} className="w-full rounded-2xl py-2 text-[14px] text-rose">
                 {collapsed ? `查看更多（还有 ${matchedModels.length - visibleModels.length} 个）` : "收起"}
               </button>
             )}
@@ -404,12 +414,12 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
-        </section>
+        </SettingsDrawer>
 
-        {/* 动手入口 */}
-        <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">动手入口</h2>
-          <div className="block-white divide-y divide-line overflow-hidden rounded-[26px]">
+        <MemoryModelSettingsSection />
+
+        <SettingsDrawer title="动手入口">
+          <div className="divide-y divide-line">
             <Row icon={<IconCode size={20} />} title="Codex" sub={settings.codexEnabled ? "已启用" : "已关闭"}>
               <Toggle label="启用 Codex" on={settings.codexEnabled} onChange={(v) => upd({ codexEnabled: v })} />
             </Row>
@@ -433,14 +443,10 @@ export default function SettingsPage() {
               <p className="text-[12px] text-mute">开启任一入口后，MCP 工具自动交给后端执行；都关闭则只用 API。</p>
             </div>
           </div>
-        </section>
+        </SettingsDrawer>
 
-        <MemoryModelSettingsSection />
-
-        {/* MCP 服务 */}
-        <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">MCP 服务</h2>
-          <div className="block-white divide-y divide-line overflow-hidden rounded-[26px]">
+        <SettingsDrawer title="MCP 服务">
+          <div className="divide-y divide-line">
             {MCP_SERVERS.map((m) => (
               <div key={m.id} className="flex items-center gap-3 px-4 py-3">
                 <div className="flex-1">
@@ -451,47 +457,26 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
-        </section>
+        </SettingsDrawer>
 
-        {/* 桌面显示 */}
-        <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">桌面显示</h2>
-          <div className="block-white divide-y divide-line overflow-hidden rounded-[26px]">
-            <Row icon={<IconWifi size={20} />} title="顶部状态栏" sub={settings.showStatusBar ? "显示" : "隐藏"}>
-              <Toggle label="显示状态栏" on={settings.showStatusBar} onChange={(v) => upd({ showStatusBar: v })} />
-            </Row>
-            <Row icon={<IconMusic size={20} />} title="音量（静音）" sub={settings.mute ? "已静音" : "开启"}>
-              <Toggle label="音量开关" on={!settings.mute} onChange={(v) => upd({ mute: !v })} />
-            </Row>
-          </div>
-        </section>
-
-        {/* 测试连接 */}
-        <section className="space-y-2">
-          <button onClick={testConnection} disabled={test.status === "testing"} className="btn-primary flex w-full items-center justify-center gap-2 py-3.5 text-[16px] disabled:opacity-70">
-            {test.status === "testing" ? (<><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> 正在测试…</>) : "测试连接"}
-          </button>
-          {(test.status === "ok" || test.status === "fail") && (
-            <p className={`flex animate-pop items-center gap-2 rounded-2xl px-4 py-3 text-[15px] ${test.status === "ok" ? "bg-sakura/30 text-rose" : "bg-rose/10 text-rose"}`}>
-              {test.status === "ok" ? <IconCheck size={18} /> : <IconClose size={18} />} {test.msg}
-            </p>
-          )}
-        </section>
-
-        {/* 主题 */}
-        <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">外观</h2>
-          <div className="block-white flex items-center gap-3 rounded-[26px] p-3">
-            <span className="orb h-10 w-10 shrink-0">{theme === "dark" ? <IconMoon size={20} /> : <IconSun size={20} />}</span>
-            <div className="flex-1">
+        <SettingsDrawer title="外观">
+          <div className="space-y-3">
+            <div>
               <Segmented
                 value={theme}
                 onChange={(v) => set("theme", v)}
                 options={[{ value: "light", label: "浅色" }, { value: "dark", label: "深色" }]}
               />
             </div>
+            <div className="flex items-center gap-3 border-t border-line pt-3">
+              <label className="flex min-w-0 flex-1 items-center justify-between gap-2 text-[15px]">
+                重点色
+                <input type="color" value={b.accent} onChange={(e) => setB({ accent: e.target.value })} className="h-10 w-12 cursor-pointer rounded-lg bg-transparent" />
+              </label>
+              <button type="button" className="btn-ghost min-h-10 shrink-0 px-3 text-[13px]" onClick={() => setB({ accent: DEFAULT_ACCENT })}>恢复默认</button>
+            </div>
           </div>
-        </section>
+        </SettingsDrawer>
 
         <section className="pb-4">
           {ECHO_AUTH_ENABLED && (

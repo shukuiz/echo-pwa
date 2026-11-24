@@ -107,6 +107,7 @@ class GlassEngine {
   basis: Basis = { left: 0, top: 0, w: 0, h: 0 };
   scale: [number, number] = [1, 1]; // 缓冲区像素 / CSS 像素，横竖各算各的（不再假设 100vh == innerHeight）
   lastN = 0;
+  private textureSize = { width: 1, height: 1 };
   debug = false;                    // ?glassdebug 或开发模式：每帧记录"画的位置 vs DOM 位置"给自动化测试
   debugSnap: { frame: number; basis: Basis & { bufW: number; bufH: number; canvas: Rect }; rows: DebugRow[] } | null = null;
   private probe: HTMLDivElement | null = null;
@@ -122,9 +123,14 @@ class GlassEngine {
     this.canvas = canvas;
     const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     this.rm = !!mq?.matches;
-    mq?.addEventListener?.("change", (e) => { this.rm = e.matches; this.applyClasses(); this.schedAdapt(); });
+    mq?.addEventListener?.("change", (e) => { this.rm = e.matches; this.applyClasses(); this.invalidate(); });
     let gl: WebGLRenderingContext | null = null;
-    try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: false }) as WebGLRenderingContext | null; } catch {}
+    // iPad can report a desktop user agent even in an installed PWA.
+    const appleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent)
+      || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (!appleMobile) {
+      try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: false, powerPreference: "low-power" }); } catch {}
+    }
     if (gl) {
       try {
         const sh = (type: number, src: string) => {
@@ -177,20 +183,19 @@ class GlassEngine {
   get cssMode() { return this.noGL || this.rm; }
 
   private onResize = () => { this.resize(); this.invalidate(); this.schedAdapt(120); };
-  private onScroll = () => { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(120); };
+  private onScroll = () => { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(120); this.kick(); };
   private onAsset = (e: Event) => { const t = e.target as Element | null; if (t && t.tagName === "IMG" && t.closest?.(".bty")) this.invalidate(); };
-  /** 量探针 → 把画布（和 #g-wall）摆到同一个盒子上，缓冲区按这个盒子的 CSS 尺寸 × DPR(≤2) 建。返回基准是否变了 */
+  /** 用实际画布的屏幕坐标对齐玻璃，限制缓冲区像素数。 */
   private resize() {
     const cv = this.canvas, pr = this.probe;
     if (!cv || !pr) return false;
-    const r = pr.getBoundingClientRect();
+    const r = (this.drawable() ? cv : pr).getBoundingClientRect();
     const w = r.width || document.documentElement.clientWidth || innerWidth, h = r.height || document.documentElement.clientHeight || innerHeight;
     const b = this.basis, changed = b.w !== w || b.h !== h || b.left !== r.left || b.top !== r.top;
-    const d = Math.min(window.devicePixelRatio || 1, 2), bw = Math.max(1, Math.round(w * d)), bh = Math.max(1, Math.round(h * d));
+    const d = this.gl ? Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(900_000 / (w * h))) : 0;
+    const bw = Math.max(1, Math.round(w * d)), bh = Math.max(1, Math.round(h * d));
     if (changed || cv.width !== bw || cv.height !== bh) {
       this.basis = { left: r.left, top: r.top, w, h };
-      const st = cv.style;
-      st.width = w + "px"; st.height = h + "px";
       if (cv.width !== bw) cv.width = bw;
       if (cv.height !== bh) cv.height = bh;
       this.scale = [bw / w, bh / h];
@@ -230,7 +235,7 @@ class GlassEngine {
     }
     h.toggle("nog", this.cssMode);
     h.toggle("wall-on", this.walls > 0);
-    h.toggle("wall-gl", this.glWalls > 0 && !this.cssMode && b?.theme === "glass");
+    h.toggle("wall-gl", this.glWalls > 0 && this.imgReady && !this.cssMode && b?.theme === "glass");
   }
 
   setWallpaper(url: string, force = false) {
@@ -251,9 +256,31 @@ class GlassEngine {
         gl.bindTexture(gl.TEXTURE_2D, this.tex);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        const longest = Math.max(img.naturalWidth, img.naturalHeight);
+        const limit = Math.min(1536, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+        let source: HTMLImageElement | HTMLCanvasElement = img;
+        if (longest > limit) {
+          const thumbnail = document.createElement("canvas");
+          const ratio = limit / longest;
+          thumbnail.width = Math.max(1, Math.round(img.naturalWidth * ratio));
+          thumbnail.height = Math.max(1, Math.round(img.naturalHeight * ratio));
+          const context = thumbnail.getContext("2d");
+          if (!context) {
+            this.noGL = true;
+            this.applyClasses();
+            return;
+          }
+          context.drawImage(img, 0, 0, thumbnail.width, thumbnail.height);
+          source = thumbnail;
+        }
+        this.textureSize = { width: source instanceof HTMLImageElement ? source.naturalWidth : source.width, height: source instanceof HTMLImageElement ? source.naturalHeight : source.height };
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        if (gl.getError() !== gl.NO_ERROR) {
+          this.noGL = true;
+          this.applyClasses();
+        }
       }
-      this.needDraw = true; this.schedAdapt();
+      this.needDraw = true; this.schedAdapt(); this.kick();
     };
     img.onerror = () => console.warn("壁纸加载失败", url);
     img.src = url;
@@ -263,14 +290,15 @@ class GlassEngine {
   register(el: HTMLElement, chrome: boolean) {
     this.regs.set(el, { chrome, rect: null, clip: null });
     this.ro?.observe(el);
-    this.rectsDirty = true; this.needDraw = true; this.schedAdapt();
+    this.invalidate();
   }
   unregister(el: HTMLElement) {
     this.regs.delete(el); this.ro?.unobserve(el);
     el.removeAttribute("data-cssg");
     this.needDraw = true;
+    this.kick();
   }
-  setHome(p: HomeProvider | null) { this.home = p; this.needDraw = true; this.schedAdapt(); }
+  setHome(p: HomeProvider | null) { this.home = p; this.invalidate(); }
   addTicker(f: () => boolean | void) { this.tickers.add(f); this.kick(); return () => { this.tickers.delete(f); }; }
   enterWall(gl: boolean) { this.walls++; if (gl) this.glWalls++; this.applyClasses(); this.needDraw = true; this.kick(); this.schedAdapt(); }
   leaveWall(gl: boolean) { this.walls = Math.max(0, this.walls - 1); if (gl) this.glWalls = Math.max(0, this.glWalls - 1); this.applyClasses(); }
@@ -290,7 +318,7 @@ class GlassEngine {
       if (!moving && now - this.lastCheck > 500) { this.lastCheck = now; if (this.resize()) this.home?.sync?.(); }
       if (this.look?.motion || this.needDraw) { this.needDraw = false; this.draw(); }
     }
-    if (this.walls > 0 || this.tickers.size) this.kick();
+    if ((drawing && this.look?.motion) || this.tickers.size) this.kick();
   };
   private drawable() {
     return !!(this.gl && this.imgReady && this.glWalls > 0 && this.look?.theme === "glass" && !this.cssMode);
@@ -355,7 +383,7 @@ class GlassEngine {
     const tint = hex2rgb(b.tint).map((v) => v / 255), me = hex2rgb(b.me).map((v) => v / 255);
     gl.viewport(0, 0, cv.width, cv.height);
     const U = this.U;
-    gl.uniform1i(U.uTex, 0); gl.uniform2f(U.uRes, cv.width, cv.height); gl.uniform2f(U.uImg, this.img!.naturalWidth, this.img!.naturalHeight);
+    gl.uniform1i(U.uTex, 0); gl.uniform2f(U.uRes, cv.width, cv.height); gl.uniform2f(U.uImg, this.textureSize.width, this.textureSize.height);
     gl.uniform2f(U.uScale, this.scale[0], this.scale[1]); gl.uniform1f(U.uTime, b.motion ? (performance.now() - this.t0) / 1000 : 0);
     gl.uniform4fv(U.uRect, rectF); gl.uniform4fv(U.uOpt, optF); gl.uniform4fv(U.uClip, clipF); gl.uniform1i(U.uN, n);
     gl.uniform1f(U.uRefract, b.P.refract); gl.uniform1f(U.uTint, b.P.tint); gl.uniform1f(U.uBlur, b.P.blur);
@@ -417,7 +445,7 @@ class GlassEngine {
       if (custom) { ink = isDarkInk(custom) ? "d" : "l"; vars = inkSetCustom(custom, effs, sh.glassy); }
       else { ink = inkOfBands(effs, sh.glassy); vars = inkSet(ink, sh.a, sh.glassy); }
       for (const k in vars) el.style.setProperty(k, vars[k]);
-      if (el.dataset.ink !== ink) { el.dataset.ink = ink; this.needDraw = true; }
+      if (el.dataset.ink !== ink) { el.dataset.ink = ink; this.needDraw = true; this.kick(); }
     }
     // 直接压在壁纸上的字：状态栏、图标名、时间、翻页点
     for (const el of Array.from(document.querySelectorAll<HTMLElement>(".bty [data-onwp]"))) {

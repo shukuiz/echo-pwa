@@ -9,7 +9,7 @@ import {
   publicConfig,
   authHeaders,
 } from "../config.js";
-import { isMemoryModelKind, publicMemoryModels, readMemoryModels, saveMemoryModel } from "../memory-model-config.js";
+import { isMemoryModelKind, listMemoryModels, publicMemoryModels, readMemoryModels, saveMemoryModel } from "../memory-model-config.js";
 import { testMemoryModel } from "../memory-recall.js";
 
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
@@ -38,6 +38,18 @@ export default async function settingsRoute(app) {
     } catch (error) {
       if (!(error instanceof RangeError)) throw error;
       return reply.code(400).send({ error: "bad_request", message: error.message });
+    }
+  });
+  app.post(memoryModelsPath + "/:kind/models", { bodyLimit: 8192 }, async (req, reply) => {
+    const { kind } = req.params;
+    if (!isMemoryModelKind(kind)) return reply.code(404).send({ message: "未知的记忆模型类型" });
+    reply.header("Cache-Control", "no-store");
+    try {
+      return { models: await listMemoryModels(kind, req.body) };
+    } catch (error) {
+      if (error instanceof RangeError) return reply.code(400).send({ message: error.message });
+      const message = error.message.startsWith("模型列表接口返回") ? error.message : "无法读取模型列表，可手动填写模型名";
+      return reply.code(502).send({ message });
     }
   });
   app.post(memoryModelsPath + "/:kind/test", { bodyLimit: 1024 }, async (req, reply) => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/Chrome";
@@ -57,13 +57,39 @@ function Chat() {
   const messagesRef = useRef<Msg[]>(messages);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const followLatest = useRef(true);
   const presetDone = useRef(false);
   const busy = !!streamingId || !!working || !!work;
   const workOpen = !!work && !work.collapsed;
 
+  useLayoutEffect(() => {
+    const field = inputRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = field.scrollHeight + "px";
+  }, [input]);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const scroller = bottomRef.current?.closest("main");
+    if (scroller && followLatest.current) scroller.scrollTop = scroller.scrollHeight;
   }, [messages, working, confirm, work?.lines.length, workOpen]);
+
+  useEffect(() => {
+    const scroller = bottomRef.current?.closest("main");
+    if (!scroller) return;
+    const onScroll = () => {
+      followLatest.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+    };
+    const observer = new ResizeObserver(() => {
+      if (followLatest.current) scroller.scrollTop = scroller.scrollHeight;
+    });
+    observer.observe(scroller);
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      scroller.removeEventListener("scroll", onScroll);
+    };
+  }, []);
 
   useEffect(() => {
     if (!work) return;
@@ -100,7 +126,7 @@ function Chat() {
   async function doChat(history: Msg[], errId?: string) {
     const echoId = errId ?? uid();
     if (errId) {
-      patch(errId, { text: "", status: "streaming", errorMessage: undefined, at: Date.now() });
+      patch(errId, { text: "", reasoning: undefined, status: "streaming", errorMessage: undefined, at: Date.now() });
     } else {
       set("messages", (ms) => [...ms, { id: echoId, role: "echo", text: "", status: "streaming", at: Date.now() }]);
     }
@@ -109,13 +135,17 @@ function Chat() {
 
     const ac = new AbortController();
     abortRef.current = ac;
-    const input = history.slice(-20).map((m) => ({ role: m.role, text: m.text }));
+    const input = history.filter((m) => m.text).slice(-20).map((m) => ({ role: m.role, text: m.text }));
     let first = true;
 
     try {
       await api.chatStream(input, {
         model: settings.model,
         signal: ac.signal,
+        onReasoning: (text) => {
+          if (first) { setWorking(null); first = false; }
+          set("messages", (ms) => ms.map((m) => m.id === echoId ? { ...m, reasoning: (m.reasoning || "") + text } : m));
+        },
         onDelta: (d) => {
           if (first) { setWorking(null); first = false; }
           set("messages", (ms) => ms.map((m) => (m.id === echoId ? { ...m, text: m.text + d } : m)));
@@ -137,7 +167,8 @@ function Chat() {
 
   function sendText(raw: string) {
     const text = raw.trim();
-    if (!text) return;
+    if (!text || abortRef.current) return;
+    followLatest.current = true;
     const userMsg: Msg = { id: uid(), role: "user", text, status: "done", at: Date.now() };
     set("messages", (ms) => [...ms, userMsg]);
     doChat([...messagesRef.current, userMsg]);
@@ -152,11 +183,9 @@ function Chat() {
 
   function stop() {
     abortRef.current?.abort();
-    abortRef.current = null;
     setWorking(null);
     setWork(null);
     if (streamingId) patch(streamingId, { status: "stopped" });
-    setStreamingId(null);
   }
 
   function retry(errId: string) {
@@ -191,11 +220,78 @@ function Chat() {
   }
 
   const quiet = settings.quietThink;
+  const composer = (
+      <div className="relative z-30 shrink-0 px-3">
+      {/* 模型选择 */}
+      {modelMenu && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setModelMenu(false)} />
+          <div className="absolute inset-x-0 bottom-full mb-2 z-30 mx-auto w-full max-w-[430px] px-3">
+            <div className="ml-auto w-full max-w-[260px] animate-pop rounded-[22px] bg-tile p-2 shadow-soft">
+              <p className="px-3 py-1.5 text-[12px] text-mute">当前模型</p>
+              <div className="model-list-scroll" tabIndex={0} aria-label="聊天模型列表">
+              {settings.models.map((md) => (
+                <button
+                  key={md}
+                  onClick={() => { set("settings", (s) => ({ ...s, model: md })); setModelMenu(false); }}
+                  className={`flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left font-mono text-[14px] ${md === settings.model ? "bg-sakura/25 text-rose" : "text-ink"}`}
+                >
+                  <span className="min-w-0 break-all">{md}</span>
+                  {md === settings.model && <IconCheck size={16} />}
+                </button>
+              ))}
+              </div>
+              <Link href="/settings" className="block px-3 pb-1 pt-2 text-[12px] text-mute">去设置里添加模型 ›</Link>
+            </div>
+          </div>
+        </>
+      )}
+
+        <div className="g cbar px-3 pb-2.5 pt-2" data-cssg data-tint="0.08" style={{ "--r": "28px" } as React.CSSProperties}>
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
+            }}
+            rows={1}
+            placeholder={confirm ? "请先在上方确认…" : "跟 echo 说点什么…"}
+            className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
+          />
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <button aria-label="附件" onClick={() => toast("附件先占位，P1 接上")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
+              <IconClip size={18} />
+            </button>
+            <button aria-label="语音" onClick={() => toast("语音先占位")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
+              <IconMic size={18} />
+            </button>
+            <button
+              onClick={() => setModelMenu((v) => !v)}
+              className="chip press flex h-9 min-w-0 flex-1 items-center justify-between gap-1 rounded-capsule px-3 font-mono text-[13px]"
+            >
+              <span className="truncate">{settings.model}</span>
+              <IconChevron size={14} className={`shrink-0 transition ${modelMenu ? "" : "rotate-180"}`} />
+            </button>
+            {busy ? (
+              <button aria-label="停止生成" onClick={stop} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-cream">
+                <IconStop size={18} />
+              </button>
+            ) : (
+              <button aria-label="发送" onClick={send} disabled={!input.trim() || !!confirm} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-[color:var(--accent-ink)] disabled:bg-orb/45">
+                <IconSend size={18} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+  );
 
   return (
     <PageShell
       glass
       title="echo"
+      footer={composer}
       sub={
         <button
           onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}
@@ -212,7 +308,7 @@ function Chat() {
       }
     >
       {confirm && (
-        <div className="sticky top-[100px] z-20 -mx-1 mb-3 animate-pop">
+        <div className="sticky top-0 z-20 -mx-1 mb-3 animate-pop">
           <div className="block-white flex items-center gap-3 rounded-[26px] p-3 pl-4">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sakura/40 text-rose"><IconHand size={20} /></span>
             <div className="min-w-0 flex-1">
@@ -227,7 +323,7 @@ function Chat() {
 
       {/* 工作窗收起后的小胶囊 */}
       {work && work.collapsed && (
-        <div className="sticky top-[104px] z-20 flex justify-center">
+        <div className="sticky top-0 z-20 flex justify-center">
           <button
             onClick={() => setWork((w) => w && { ...w, collapsed: false })}
             className="press flex animate-pop items-center gap-2 rounded-capsule bg-cream px-4 py-2 text-[13px] text-ink/80 shadow-soft"
@@ -259,7 +355,7 @@ function Chat() {
             </div>
           </div>
         )}
-        <div ref={bottomRef} className={workOpen ? "h-[380px]" : "h-32"} />
+        <div ref={bottomRef} className={workOpen ? "h-[260px]" : undefined} />
       </div>
 
       {/* 动手入口工作窗 */}
@@ -299,70 +395,6 @@ function Chat() {
         </div>
       )}
 
-      {/* 模型选择 */}
-      {modelMenu && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setModelMenu(false)} />
-          <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+122px)] z-30 mx-auto w-full max-w-[430px] px-3">
-            <div className="ml-24 w-[230px] animate-pop rounded-[22px] bg-tile p-2 shadow-soft">
-              <p className="px-3 py-1.5 text-[12px] text-mute">当前模型</p>
-              {settings.models.map((md) => (
-                <button
-                  key={md}
-                  onClick={() => { set("settings", (s) => ({ ...s, model: md })); setModelMenu(false); }}
-                  className={`flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left font-mono text-[14px] ${md === settings.model ? "bg-sakura/25 text-rose" : "text-ink"}`}
-                >
-                  {md}
-                  {md === settings.model && <IconCheck size={16} />}
-                </button>
-              ))}
-              <Link href="/settings" className="block px-3 pb-1 pt-2 text-[12px] text-mute">去设置里添加模型 ›</Link>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* 底栏：输入框 + 工具行 */}
-      <div className="fixed inset-x-0 bottom-[calc(max(env(safe-area-inset-bottom),4px)+14px)] z-30 mx-auto w-full max-w-[430px] px-3">
-        <div className="g cbar px-3 pb-2.5 pt-2" data-cssg data-tint="0.08" style={{ "--r": "28px" } as React.CSSProperties}>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
-            }}
-            rows={1}
-            placeholder={confirm ? "请先在上方确认…" : "跟 echo 说点什么…"}
-            className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
-          />
-          <div className="mt-0.5 flex items-center gap-1.5">
-            <button aria-label="附件" onClick={() => toast("附件先占位，P1 接上")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
-              <IconClip size={18} />
-            </button>
-            <button aria-label="语音" onClick={() => toast("语音先占位")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
-              <IconMic size={18} />
-            </button>
-            <button
-              onClick={() => setModelMenu((v) => !v)}
-              className="chip press flex h-9 min-w-0 flex-1 items-center justify-between gap-1 rounded-capsule px-3 font-mono text-[13px]"
-            >
-              <span className="truncate">{settings.model}</span>
-              <IconChevron size={14} className={`shrink-0 transition ${modelMenu ? "" : "rotate-180"}`} />
-            </button>
-            {busy ? (
-              <button aria-label="停止生成" onClick={stop} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-cream">
-                <IconStop size={18} />
-              </button>
-            ) : (
-              <button aria-label="发送" onClick={send} disabled={!input.trim() || !!confirm} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-white disabled:bg-orb/45">
-                <IconSend size={18} />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
       {menu && (
         <div className="fixed inset-0 z-50" onClick={() => setMenu(null)}>
           <div className="absolute inset-0 bg-fog/40 backdrop-blur-sm" />
@@ -395,12 +427,12 @@ function Avatar() {
   );
 }
 
-function ThinkLine({ think }: { think: Think }) {
-  const [open, setOpen] = useState(false);
+function ThinkLine({ think, initiallyOpen = false }: { think: Think; initiallyOpen?: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
   return (
     <div className="mb-1.5 pl-10">
       <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]" data-onwp>
-        <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-1">
+        <button aria-expanded={open} onClick={() => setOpen((v) => !v)} className="flex min-h-9 items-center gap-1">
           <IconClock size={14} /> 思考过程 <IconChevron size={13} className={`transition ${open ? "" : "-rotate-90"}`} />
         </button>
         {think.tags.map((t, i) => (
@@ -411,7 +443,7 @@ function ThinkLine({ think }: { think: Think }) {
         ))}
       </div>
       {open && (
-        <p className="mt-1.5 max-w-[86%] animate-rise rounded-[6px_16px_16px_6px] border-l-[3px] border-sakura bg-tile/55 px-3 py-2 text-[13px] leading-[1.6] text-mute">{think.text}</p>
+        <p className="mt-1.5 max-w-full whitespace-pre-wrap break-words rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute">{think.text}</p>
       )}
     </div>
   );
@@ -419,21 +451,34 @@ function ThinkLine({ think }: { think: Think }) {
 
 function Bubble({ m, quiet, onTap, onRetry }: { m: Msg; quiet: boolean; onTap: (e: React.MouseEvent<HTMLDivElement>, m: Msg) => void; onRetry: () => void }) {
   const mine = m.role === "user";
+  const thoughts = !mine && m.reasoning ? <ThinkLine think={{ text: m.reasoning, tags: [] }} initiallyOpen={!quiet} />
+    : !mine && quiet && m.think ? <ThinkLine think={m.think} /> : null;
+  if (!m.text && !m.card && m.status !== "error") {
+    return thoughts && (
+      <div className="pt-2">
+        {thoughts}
+        {m.status === "stopped" && <p className="pl-10 text-[12px]" data-onwp>已停止生成</p>}
+      </div>
+    );
+  }
   if (m.status === "error") {
     return (
-      <div className="flex items-end gap-2 animate-rise">
-        <Avatar />
-        <div className="rounded-[22px] rounded-bl-md border border-rose/40 bg-tile px-4 py-2.5">
-          <p className="text-[15px] text-rose">回复失败了 (；´д｀)</p>
-          {m.errorMessage && <p className="max-w-[65vw] break-words text-sm text-rose">{m.errorMessage}</p>}
-          <button onClick={onRetry} className="press mt-1.5 flex items-center gap-1.5 rounded-capsule bg-rose/10 px-3 py-1.5 text-[15px] text-rose"><IconRetry size={16} /> 重试</button>
+      <div className="pt-2">
+        {thoughts}
+        <div className="flex items-end gap-2 animate-rise">
+          <Avatar />
+          <div className="rounded-[22px] rounded-bl-md border border-rose/40 bg-tile px-4 py-2.5">
+            <p className="text-[15px] text-rose">回复失败了 (；´д｀)</p>
+            {m.errorMessage && <p className="max-w-[65vw] break-words text-sm text-rose">{m.errorMessage}</p>}
+            <button onClick={onRetry} className="press mt-1.5 flex items-center gap-1.5 rounded-capsule bg-rose/10 px-3 py-1.5 text-[15px] text-rose"><IconRetry size={16} /> 重试</button>
+          </div>
         </div>
       </div>
     );
   }
   return (
     <div className="pt-2 animate-rise">
-    {!mine && quiet && m.think && <ThinkLine think={m.think} />}
+    {thoughts}
     <div className={`flex items-end gap-2 ${mine ? "justify-end" : ""}`}>
       {!mine && <Avatar />}
       <div className={`max-w-[80%] ${m.card && m.status === "done" ? "w-[80%]" : ""}`}>

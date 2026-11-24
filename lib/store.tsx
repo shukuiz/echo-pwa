@@ -18,6 +18,7 @@ export type Msg = {
   text: string;
   status?: "streaming" | "done" | "error" | "stopped";
   errorMessage?: string;
+  reasoning?: string;
   at: number;
   card?: Card;
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
@@ -120,6 +121,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [toastText, setToastText] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
+  const messageVersion = useRef(0);
 
   // 读取本地存储
   useEffect(() => {
@@ -153,16 +155,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
+    const initialMessageVersion = messageVersion.current;
     (async () => {
       try {
         const [hist, mem, cfg] = await Promise.all([api.getHistory(), api.getMemory(), api.getSettings()]);
         if (cancelled) return;
         setState((prev) => ({
           ...prev,
-          messages: (hist.messages || []).map((m) => ({
+          messages: messageVersion.current !== initialMessageVersion ? prev.messages : (hist.messages || []).map((m) => ({
             id: m.id ?? uid(),
             role: m.role,
             text: m.text ?? "",
+            reasoning: typeof m.reasoning === "string" ? m.reasoning : undefined,
             status: (m.status === "streaming" ? "stopped" : m.status ?? "done") as Msg["status"],
             at: m.at ?? Date.now(),
           })),
@@ -202,6 +206,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [state.theme]);
 
   const set: Ctx["set"] = useCallback((key, value) => {
+    if (key === "messages") messageVersion.current++;
     setState((prev) => ({
       ...prev,
       [key]: typeof value === "function" ? (value as (p: unknown) => unknown)(prev[key]) : value,
@@ -215,6 +220,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
+    messageVersion.current++;
     setState(defaultState);
   }, []);
 
