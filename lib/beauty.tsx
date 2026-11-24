@@ -1,13 +1,16 @@
 "use client";
 
 // 美化设置：风格 / 色调 / 字体 / 字色 / 桌面小组件布局
-// 只存在这台设备的 localStorage（带版本号的独立 key），图片放 IndexedDB（见 lib/idb.ts）。
+// 本地存 localStorage（带版本号的独立 key），图片放 IndexedDB（见 lib/idb.ts）；
+// 保存时再备份一份到后端 /api/beauty（不含图片）：iOS 每次「添加到主屏幕」都是全新的本地存储，只靠 localStorage 会整套丢掉。
+// 美化页用「草稿」：改动立刻预览，点「保存」才落盘；桌面编辑、设置页的重点色仍是自动保存。
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { api } from "./api";
 
 export type ThemeKind = "glass" | "real";
 export type WidgetType = "clock" | "photo" | "echo" | "remind" | "note" | "calendar" | "countdown" | "gif";
 export type WidgetSize = "s" | "m" | "l";
-export type AppId = "chat" | "memory" | "remind" | "files" | "beauty" | "settings";
+export type AppId = "chat" | "memory" | "remind" | "files" | "beauty" | "settings" | "favorites";
 export type GlassParams = { refract: number; tint: number; blur: number; edge: number; shine: number; wobble: number };
 
 export type WidgetItem = {
@@ -51,6 +54,7 @@ export type Beauty = {
   meInkColor: string;
   items: HomeItem[];
   removed: AppId[];
+  savedAt: number;            // 上次保存的时间：本地和云端谁新用谁
 };
 
 export const BEAUTY_KEY = "echo-beauty-v1";
@@ -73,6 +77,7 @@ export const APPS: Record<AppId, { n: string; i: string; href: string }> = {
   files: { n: "文件柜", i: "folder", href: "/files" },
   beauty: { n: "美化", i: "palette", href: "/beauty" },
   settings: { n: "设置", i: "gear", href: "/settings" },
+  favorites: { n: "收藏本", i: "heart", href: "/favorites" },
 };
 export const WT: Record<WidgetType, { n: string; i: string; d: string; c: [string, string] }> = {
   clock: { n: "时钟", i: "clock", d: "指针、翻页、数字", c: ["#9fd2ff", "#6aa8f0"] },
@@ -111,6 +116,7 @@ const seedItems = (): HomeItem[] => [
   { id: "a-chat", kind: "app", app: "chat" }, { id: "a-remind", kind: "app", app: "remind" },
   { id: "a-files", kind: "app", app: "files" }, { id: "a-beauty", kind: "app", app: "beauty" },
   { id: "a-memory", kind: "app", app: "memory" }, { id: "a-settings", kind: "app", app: "settings" },
+  { id: "a-favorites", kind: "app", app: "favorites" },
   { id: "w-note", kind: "w", type: "note", size: "s", text: "下雨天也要好好吃饭\n记得带伞 ☂", bg: "glass" },
   { id: "w-photo", kind: "w", type: "photo", size: "s", photos: [], bg: "glass" },
 ];
@@ -123,7 +129,7 @@ export const defaultBeauty = (): Beauty => ({
   v: 1, theme: "glass", accent: DEFAULT_ACCENT, mat: "frost", tint: "#f3f6fa", me: "#ffb6c8", bubMode: "glass", font: "sys", songOrig: false,
   preset: "mist", icon: "#f7f8fb", iconA: 88, wA: 100, P: { ...PRESETS.mist }, motion: reducedMotion() ? 0 : 1, wp: "default",
   inkMode: "auto", inkColor: "#ffffff", meInkMode: "follow", meInkColor: "#3a2630",
-  items: seedItems(), removed: [],
+  items: seedItems(), removed: [], savedAt: 0,
 });
 
 // ---------- 读取 + 迁移：每个字段单独校验，坏字段退回默认，不让一次脏数据弄坏整个桌面 ----------
@@ -195,6 +201,7 @@ export function migrateBeauty(raw: unknown): Beauty {
     meInkColor: isHex(r.meInkColor) ? r.meInkColor : d.meInkColor,
     items: d.items,
     removed: Array.isArray(r.removed) ? (r.removed.filter((a) => APPIDS.includes(a as AppId)) as AppId[]) : [],
+    savedAt: num(r.savedAt, 0, 1e15, 0),
   };
   if (Array.isArray(r.items)) {
     const seen = new Set<string>();
@@ -217,35 +224,82 @@ export function loadBeauty(): Beauty {
   }
 }
 
+/** 比较用：去掉 savedAt，只看真正的外观字段 */
+const sig = (b: Beauty) => JSON.stringify({ ...b, savedAt: 0 });
+function writeLocal(b: Beauty) {
+  try { localStorage.setItem(BEAUTY_KEY, JSON.stringify(b)); return true; } catch { return false; }
+}
+
+export type SaveResult = { local: boolean; cloud: "ok" | "offline" | "skipped" };
+
 type Ctx = {
   b: Beauty;
   ready: boolean;
+  /** 改外观：立刻生效；不在草稿里时自动保存（桌面编辑、设置页） */
   setB: (patch: Partial<Beauty> | ((prev: Beauty) => Partial<Beauty>)) => void;
+  /** 美化页的草稿：有没改完没保存的 */
+  dirty: boolean;
+  beginDraft: () => void;
+  /** 离开美化页：keep=false 时丢掉没保存的改动，回到上次保存的样子 */
+  endDraft: (keep?: boolean) => void;
+  save: () => Promise<SaveResult>;
+  discard: () => void;
+  /** 登录后从后端拉美化备份（BeautySync 调用，AuthGate 之外不能请求私有接口） */
+  syncCloud: () => Promise<void>;
 };
 const BeautyCtx = createContext<Ctx | null>(null);
 
 export function BeautyProvider({ children }: { children: React.ReactNode }) {
   const [b, setState] = useState<Beauty>(defaultBeauty);
   const [ready, setReady] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const saveT = useRef<ReturnType<typeof setTimeout>>();
-
-  useEffect(() => { setState(loadBeauty()); setReady(true); }, []);
+  const bRef = useRef(b);
+  bRef.current = b;
+  const savedRef = useRef<Beauty>(b);   // 上次保存（落盘）的样子
+  const draft = useRef(0);              // >0：美化页开着，改动先不落盘
 
   useEffect(() => {
+    const loaded = loadBeauty();
+    savedRef.current = loaded;
+    setState(loaded);
+    setReady(true);
+    // 请求浏览器别在空间紧张时清掉本地数据（iOS 主屏幕 App 也适用）
+    navigator.storage?.persist?.().catch(() => {});
+  }, []);
+
+  const persist = useCallback((next: Beauty) => {
+    const ok = writeLocal(next);
+    if (ok) savedRef.current = next;
+    return ok;
+  }, []);
+
+  // 自动保存（不在草稿里时）：200ms 防抖
+  useEffect(() => {
     if (!ready) return;
+    if (draft.current > 0) { setDirty(sig(b) !== sig(savedRef.current)); return; }
     clearTimeout(saveT.current);
     saveT.current = setTimeout(() => {
-      try { localStorage.setItem(BEAUTY_KEY, JSON.stringify(b)); } catch {}
+      if (draft.current > 0 || sig(bRef.current) === sig(savedRef.current)) return;
+      const next = { ...bRef.current, savedAt: Date.now() };
+      if (persist(next)) api.putBeauty(next, next.savedAt).catch(() => {});
     }, 200);
-  }, [b, ready]);
+  }, [b, ready, persist]);
 
-  // 关页面前立刻写一次，别丢最后 200ms 的改动
+  // 退到后台 / 关页面前把还没写的自动保存立刻写掉（iOS 主屏幕 App 常常只有 visibilitychange，没有 pagehide）
   useEffect(() => {
     if (!ready) return;
-    const flush = () => { try { localStorage.setItem(BEAUTY_KEY, JSON.stringify(bRef.current)); } catch {} };
+    const flush = () => {
+      if (draft.current > 0 || sig(bRef.current) === sig(savedRef.current)) return;
+      clearTimeout(saveT.current);
+      persist({ ...bRef.current, savedAt: Date.now() });
+    };
+    const onVis = () => { if (document.visibilityState === "hidden") flush(); };
     window.addEventListener("pagehide", flush);
-    return () => window.removeEventListener("pagehide", flush);
-  }, [ready]);
+    document.addEventListener("visibilitychange", onVis);
+    return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", onVis); };
+  }, [ready, persist]);
+
   useEffect(() => {
     const root = document.documentElement.style;
     const rgb = b.accent.slice(1).match(/.{2}/g)?.map((channel) => parseInt(channel, 16));
@@ -265,14 +319,74 @@ export function BeautyProvider({ children }: { children: React.ReactNode }) {
       root.setProperty("--desktop-accent-ink", ink);
     }
   }, [b.accent]);
-  const bRef = useRef(b);
-  bRef.current = b;
 
   const setB: Ctx["setB"] = useCallback((patch) => {
     setState((prev) => ({ ...prev, ...(typeof patch === "function" ? patch(prev) : patch) }));
   }, []);
 
-  return <BeautyCtx.Provider value={{ b, ready, setB }}>{children}</BeautyCtx.Provider>;
+  const beginDraft = useCallback(() => {
+    // 进美化页前先把桌面那边还没落盘的自动保存写掉，草稿的「上次保存」才准
+    if (draft.current === 0 && sig(bRef.current) !== sig(savedRef.current)) {
+      clearTimeout(saveT.current);
+      persist({ ...bRef.current, savedAt: Date.now() });
+    }
+    draft.current++;
+    setDirty(false);
+  }, [persist]);
+
+  const discard = useCallback(() => {
+    setState(savedRef.current);
+    setDirty(false);
+  }, []);
+
+  const endDraft = useCallback((keep = false) => {
+    draft.current = Math.max(0, draft.current - 1);
+    if (draft.current === 0 && !keep && sig(bRef.current) !== sig(savedRef.current)) setState(savedRef.current);
+    setDirty(false);
+  }, []);
+
+  const save = useCallback(async (): Promise<SaveResult> => {
+    clearTimeout(saveT.current);
+    const next = { ...bRef.current, savedAt: Date.now() };
+    const local = persist(next);
+    setState(next);
+    setDirty(false);
+    try {
+      await api.putBeauty(next, next.savedAt);
+      return { local, cloud: "ok" };
+    } catch {
+      return { local, cloud: "offline" };
+    }
+  }, [persist]);
+
+  const syncCloud = useCallback(async () => {
+    try {
+      const remote = await api.getBeauty();
+      const mine = savedRef.current;
+      if (remote.beauty && remote.savedAt > (mine.savedAt || 0)) {
+        // 云端更新：比如重新添加到主屏幕后本地是空的。正在编辑草稿时不打断
+        const next = migrateBeauty({ ...(remote.beauty as object), savedAt: remote.savedAt });
+        writeLocal(next);
+        savedRef.current = next;
+        if (draft.current === 0) setState(next);
+      } else if (mine.savedAt && (!remote.beauty || remote.savedAt < mine.savedAt)) {
+        await api.putBeauty(mine, mine.savedAt);
+      }
+    } catch {}
+  }, []);
+
+  return (
+    <BeautyCtx.Provider value={{ b, ready, setB, dirty, beginDraft, endDraft, save, discard, syncCloud }}>
+      {children}
+    </BeautyCtx.Provider>
+  );
+}
+
+/** 放在登录之后（StoreProvider 里）：拉一次云端美化备份 */
+export function BeautySync() {
+  const { ready, syncCloud } = useBeauty();
+  useEffect(() => { if (ready) syncCloud(); }, [ready, syncCloud]);
+  return null;
 }
 
 export function useBeauty() {

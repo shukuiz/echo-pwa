@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { seedFiles, seedMemory, seedMessages, seedReminders } from "./mock";
-import { api, ECHO_AUTH_ENABLED } from "./api";
+import { api, ECHO_AUTH_ENABLED, type MemoryExtra } from "./api";
 
 export type Role = "user" | "echo";
 export type Card =
@@ -35,7 +35,8 @@ export type MemoryItem = {
   text: string;
   pinned: boolean;
   updatedAt: number;
-};
+  createdAt?: number;
+} & MemoryExtra;
 
 export type Reminder = {
   id: string;
@@ -126,6 +127,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // 读取本地存储
   useEffect(() => {
     if (ECHO_AUTH_ENABLED) {
+      // 登录模式下聊天/记忆以后端为准，本地只记浅色 / 深色（以前连它也不存，刷新就回到浅色）
+      try {
+        const saved = JSON.parse(localStorage.getItem(KEY) || "{}") as Partial<State>;
+        if (saved.theme === "dark" || saved.theme === "light") setState((p) => ({ ...p, theme: saved.theme as State["theme"] }));
+      } catch {}
       setReady(true);
       return;
     }
@@ -145,9 +151,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   // 写入本地存储
   useEffect(() => {
-    if (!ready || ECHO_AUTH_ENABLED) return;
+    if (!ready) return;
     try {
-      localStorage.setItem(KEY, JSON.stringify(state));
+      localStorage.setItem(KEY, JSON.stringify(ECHO_AUTH_ENABLED ? { theme: state.theme } : state));
     } catch {}
   }, [state, ready]);
 
@@ -228,7 +234,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     <StoreCtx.Provider value={{ ...state, ready, set, toast, resetAll }}>
       {children}
       {toastText && (
-        <div className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center">
+        <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+64px)] z-[70] flex justify-center">
           <div className="animate-pop rounded-capsule bg-ink/85 px-4 py-2 text-[15px] text-cream shadow-soft">{toastText}</div>
         </div>
       )}

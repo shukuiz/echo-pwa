@@ -86,7 +86,7 @@ export async function testMemoryModel(kind, config) {
 }
 
 function documentFor(item) {
-  if (!item?.id || !["text", "summary"].includes(item.tab) || typeof item.text !== "string" || !item.text.trim()) return null;
+  if (!item?.id || !["text", "summary"].includes(item.tab) || item.status === "archived" || typeof item.text !== "string" || !item.text.trim()) return null;
   const title = typeof item.title === "string" ? item.title.trim().slice(0, 160) : "";
   return `${title}\n${item.text.trim()}`.trim().slice(0, MAX_DOCUMENT_CHARS);
 }
@@ -177,7 +177,7 @@ export function createMemoryRecall(load, env = process.env) {
       const score = scores.get(index);
       const item = current.get(doc.id);
       if (score < threshold || documentFor(item) !== doc.text) return [];
-      return [{ id: item.id, tab: item.tab, title: item.title ?? "", text: item.text, score }];
+      return [{ id: item.id, tab: item.tab, kind: item.kind ?? (item.tab === "summary" ? "event" : "scene"), title: item.title ?? "", text: item.text, score }];
     }).sort((a, b) => b.score - a.score).slice(0, limit);
   };
 }

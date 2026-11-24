@@ -9,7 +9,7 @@ export async function buildSystemPrompt() {
   const today = await readText(paths.today(DATA_DIR));
   const store = await readJSON(paths.store(DATA_DIR), { memory: [] });
 
-  const byTab = (t) => (store.memory || []).filter((m) => m.tab === t);
+  const byTab = (t) => (store.memory || []).filter((m) => m.tab === t && m.status !== "archived");
   const fmt = (items) => items.map((m) => `- ${m.title ? m.title + "：" : ""}${m.text}`).join("\n");
 
   const sections = [];

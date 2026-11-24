@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Beauty, DEFAULT_ACCENT, FCOLS, ICOLS, MES, PRESETS, SLIDERS, TINTS, useBeauty } from "@/lib/beauty";
 import { useStore } from "@/lib/store";
@@ -58,11 +58,29 @@ function Slider({ label, value, max, onChange, wide, suffix = "" }: { label: str
 }
 
 export default function BeautyPage() {
-  const { b, setB } = useBeauty();
+  const { b, setB, dirty, beginDraft, endDraft, save, discard } = useBeauty();
   const { theme, set, toast } = useStore();
   const router = useRouter();
   const barRef = useRef<HTMLDivElement>(null);
+  const saveRef = useRef<HTMLDivElement>(null);
+  const [saving, setSaving] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   useGlassRect(barRef, true);
+  useGlassRect(saveRef, true);
+
+  // 进页面开草稿：改动立刻预览，点「保存」才落盘；没保存就离开会回到上次保存的样子
+  useEffect(() => { beginDraft(); return () => endDraft(false); }, [beginDraft, endDraft]);
+
+  const goBack = () => (window.history.length > 1 ? router.back() : router.push("/"));
+  async function doSave(thenLeave = false) {
+    if (saving) return;
+    setSaving(true);
+    const r = await save();
+    setSaving(false);
+    if (!r.local) toast("没存上，可能是手机空间不够 (；´д｀)");
+    else toast(r.cloud === "ok" ? "已保存 ✓" : "已保存到本机 ✓ 云端备份稍后再试");
+    if (thenLeave && r.local) { setLeaving(false); goBack(); }
+  }
   const userWp = useBlobUrl("wp:user");
   const rm = engine.rm, noGL = engine.noGL;
 
@@ -83,10 +101,11 @@ export default function BeautyPage() {
   return (
     <WallScreen gl fixed className="bpage">
       <div className="top">
-        <div className="hstatus" style={{ height: 48, paddingTop: 6 }} data-onwp><span /><span /></div>
+        <div className="hstatus fake-sb" style={{ height: 48, paddingTop: 6 }} data-onwp><span /><span /></div>
         <div ref={barRef} className="g wbar" data-glass data-tint="0.08">
-          <button className="back" aria-label="返回" onClick={() => (window.history.length > 1 ? router.back() : router.push("/"))}><GIcon n="back" s={20} /></button>
+          <button className="back" aria-label="返回" onClick={() => (dirty ? setLeaving(true) : goBack())}><GIcon n="back" s={20} /></button>
           <b>美化</b>
+          {dirty && <span className="unsaved" role="status"><i />有改动未保存</span>}
         </div>
       </div>
       <div className="bscroll" data-gclip>
@@ -212,9 +231,34 @@ export default function BeautyPage() {
 
         <Card icon={theme === "dark" ? "moon" : "sun"} title="外观">
           <Seg label="浅色或深色" value={theme} opts={[["light", "浅色"], ["dark", "深色"]]} onChange={(v) => set("theme", v)} />
-          <p className="hint">记忆本、设置、文件柜这些页面的浅色 / 深色</p>
+          <p className="hint">记忆本、设置、文件柜这些页面的浅色 / 深色（这一项点了就生效，不用保存）</p>
         </Card>
       </div>
+
+      {/* 底部保存条：一直在，改过才亮 */}
+      <div className="savewrap">
+        <div ref={saveRef} className={`g savebar ${dirty ? "on" : ""}`} data-glass data-tint="0.1">
+          <span className="st" aria-live="polite">{dirty ? <><i className="dot" />改了还没保存，现在看到的是预览</> : <><GIcon n="check" s={15} w={2.4} />都保存好啦</>}</span>
+          {dirty && <button className="ghost" onClick={discard}>撤销</button>}
+          <button className="save" disabled={!dirty || saving} onClick={() => doSave()}>{saving ? "保存中…" : "保存"}</button>
+        </div>
+      </div>
+
+      {leaving && (
+        <>
+          <div className="gmask" onClick={() => setLeaving(false)} />
+          <div className="gsheet on" role="dialog" aria-label="还没保存">
+            <div className="grab" />
+            <div className="sh-h"><b>改动还没保存</b></div>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>不保存的话，离开后会回到上次保存的样子</p>
+            <div className="addl">
+              <button className="gbtn dark" onClick={() => doSave(true)}>保存并返回</button>
+              <button className="gbtn red" onClick={() => { setLeaving(false); discard(); goBack(); }}>不保存，直接返回</button>
+              <button className="gbtn" onClick={() => setLeaving(false)}>继续编辑</button>
+            </div>
+          </div>
+        </>
+      )}
     </WallScreen>
   );
 }

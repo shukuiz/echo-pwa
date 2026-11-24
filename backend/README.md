@@ -58,9 +58,12 @@ npm start          # 默认监听 0.0.0.0:8787
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | 健康检查 |
-| GET/POST | `/api/chat` | 聊天历史 / 流式聊天 |
+| GET/POST | `/api/chat` | 聊天历史 / 流式聊天（可带 `ids: {user, echo}` 让前后端消息 id 一致；`regenerate: true` 不重复存用户消息）|
 | GET/POST/PUT/DELETE | `/api/memory` | 记忆读写（`/api/memory/:id` 改/删）|
-| POST | `/api/memory/recall` | 先按向量筛选，再对记忆候选重排 |
+| POST | `/api/memory/recall` | 先按向量筛选，再对记忆候选重排（未配置模型回 503）|
+| DELETE | `/api/chat/messages` | 批量删除聊天记录 `{ ids }`（多选删除、重新生成前删旧回复）|
+| GET/POST/PUT/DELETE | `/api/favorites` | 收藏本（`/api/favorites/:id` 改/删），存 `memory/favorites.json` |
+| GET/PUT | `/api/beauty` | 美化设置云端备份（只收更新的 `savedAt`），存 `memory/beauty.json` |
 | GET/POST/DELETE | `/api/files` | 文件读写（`/api/files/:id` 读/删）|
 | GET/POST | `/api/tools` | 工具调用（P1 接入 MCP，现为占位）|
 | GET/PUT | `/api/settings` | 设置读写（Key 脱敏返回）|

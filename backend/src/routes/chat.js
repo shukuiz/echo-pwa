@@ -4,6 +4,9 @@ import { buildSystemPrompt } from "../prompt.js";
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
 
 const MAX_HISTORY = 20;
+const MAX_DELETE = 500;
+/** 前端生成的消息 id：只收短的安全字符，其它一律由后端生成 */
+const clientId = (v) => (typeof v === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(v) ? v : null);
 
 /** 归一化 base url：去掉末尾斜杠 */
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
@@ -57,6 +60,22 @@ export default async function chatRoute(app) {
     return chat;
   });
 
+  // 批量删除聊天记录 { ids: string[] }（多选删除 / 重新生成前删旧回复）
+  app.delete("/api/chat/messages", { bodyLimit: 64 * 1024 }, async (req, reply) => {
+    const ids = req.body?.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > MAX_DELETE || !ids.every((id) => typeof id === "string" && id.length <= 64)) {
+      reply.code(400);
+      return { error: "bad_input", message: `ids 需要是 1–${MAX_DELETE} 个消息 id` };
+    }
+    const drop = new Set(ids);
+    const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+    const before = chat.messages.length;
+    chat.messages = chat.messages.filter((m) => !drop.has(m.id));
+    const deleted = before - chat.messages.length;
+    if (deleted) await writeJSON(paths.chat(DATA_DIR), chat);
+    return { ok: true, deleted };
+  });
+
   // 流式聊天。请求体：{ messages: [{role,text}], model? }
   // 新版客户端接收 NDJSON，旧版继续接收纯文本。
   app.post("/api/chat", async (req, reply) => {
@@ -73,6 +92,11 @@ export default async function chatRoute(app) {
 
     const body = req.body || {};
     const structured = body.streamFormat === "ndjson";
+    // 前端带上自己的消息 id，删除 / 重新生成时前后端才对得上；regenerate = 重新生成本轮，用户消息已在记录里
+    const ids = body.ids && typeof body.ids === "object" ? body.ids : {};
+    const userId = clientId(ids.user);
+    const replyId = clientId(ids.echo);
+    const regenerate = body.regenerate === true;
     const incoming = Array.isArray(body.messages) ? body.messages : [];
     const model = body.model || cfg.model;
     const useResponses = cfg.provider === "openai" && typeof model === "string" &&
@@ -91,8 +115,8 @@ export default async function chatRoute(app) {
     try {
       const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
       const lastUser = incoming[incoming.length - 1];
-      if (lastUser && lastUser.role === "user") {
-        chat.messages.push({ id: uid(), role: "user", text: lastUser.text, at: Date.now() });
+      if (lastUser && lastUser.role === "user" && !regenerate && !(userId && chat.messages.some((m) => m.id === userId))) {
+        chat.messages.push({ id: userId || uid(), role: "user", text: lastUser.text, at: Date.now() });
         await writeJSON(paths.chat(DATA_DIR), chat);
       }
     } catch {}
@@ -217,6 +241,16 @@ export default async function chatRoute(app) {
     }
 
     const stopped = upstreamAbort.signal.aborted;
+    // 落盘：先保存助手完整回复再结束响应，前端拿到「完成」后立刻删除 / 重新生成也对得上
+    try {
+      if (fullText || reasoning) {
+        const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+        const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
+        const id = replyId && !chat.messages.some((m) => m.id === replyId) ? replyId : uid();
+        chat.messages.push({ id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), at: Date.now(), status });
+        await writeJSON(paths.chat(DATA_DIR), chat);
+      }
+    } catch {}
     if (streamError && !headersSent && !stopped) {
       // 还没输出正文：直接返回错误，前端显示原因并可重试
       reply.code(502);
@@ -229,14 +263,5 @@ export default async function chatRoute(app) {
       reply.raw.end();
     }
 
-    // 落盘：保存助手完整回复
-    try {
-      if (fullText || reasoning) {
-        const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-        const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
-        chat.messages.push({ id: uid(), role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), at: Date.now(), status });
-        await writeJSON(paths.chat(DATA_DIR), chat);
-      }
-    } catch {}
   });
 }
