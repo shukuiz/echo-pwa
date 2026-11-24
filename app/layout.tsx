@@ -4,7 +4,7 @@ import "./beauty.css";
 import { StoreProvider } from "@/lib/store";
 import PWARegister from "@/components/PWARegister";
 import AuthGate from "@/components/AuthGate";
-import { BeautyProvider } from "@/lib/beauty";
+import { BeautyProvider, BeautySync } from "@/lib/beauty";
 import GlassMount from "@/components/glass/GlassMount";
 
 export const metadata: Metadata = {
@@ -38,7 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <BeautyProvider>
           <GlassMount />
-          <AuthGate><StoreProvider>{children}</StoreProvider></AuthGate>
+          <AuthGate><StoreProvider><BeautySync />{children}</StoreProvider></AuthGate>
         </BeautyProvider>
         <PWARegister />
       </body>
