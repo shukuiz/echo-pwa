@@ -64,7 +64,7 @@ export default function BeautyPage() {
   const barRef = useRef<HTMLDivElement>(null);
   useGlassRect(barRef, true);
   const userWp = useBlobUrl("wp:user");
-  const css = engine.cssMode, rm = engine.rm, noGL = engine.noGL;
+  const rm = engine.rm, noGL = engine.noGL;
 
   const P = (k: keyof Beauty["P"], v: number) => setB((p) => ({ P: { ...p.P, [k]: v }, preset: null }));
 
@@ -155,7 +155,7 @@ export default function BeautyPage() {
           </p>
         </Card>
 
-        <Card icon="drop" title="玻璃" dim={b.theme === "real" || css}>
+        <Card icon="drop" title="玻璃" dim={b.theme === "real"}>
           <Seg label="玻璃预设" value={b.preset} opts={[["mist", "雾窗"], ["clear", "清透"], ["frost", "磨砂"]]} onChange={(v) => setB({ preset: v, P: { ...PRESETS[v] } })} />
           <div style={{ marginTop: 8 }}>
             {SLIDERS.map(([k, l, max]) => <Slider key={k} label={l} value={b.P[k]} max={max} onChange={(v) => P(k, v)} />)}
