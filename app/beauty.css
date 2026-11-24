@@ -25,10 +25,10 @@ html.f-ipa body, html.f-ipa input, html.f-ipa textarea, html.f-ipa button, html.
 #g-wall, #g-canvas { position: fixed; left: 0; top: 0; z-index: 0; display: none; pointer-events: none; }
 #g-wall { right: 0; bottom: 0; }
 #g-canvas { width: 100%; height: 100%; }
-#g-wall { background: #8fa6bd var(--g-wpimg) center / cover no-repeat; }
+#g-wall { background: rgb(var(--tile)) var(--g-wpimg, none) center / cover no-repeat; }
 html.wall-on #g-wall { display: block; }
 html.wall-gl #g-canvas { display: block; }
-html.wall-on body { background: #8fa6bd; }
+html.wall-on, html.wall-on body { background-color: rgb(var(--tile)); }
 
 .bty { color: var(--g-ink); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .bty input, .bty textarea, .bty [contenteditable="true"], .bty [contenteditable="plaintext-only"] { -webkit-user-select: text; user-select: text; }
