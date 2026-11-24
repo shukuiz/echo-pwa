@@ -45,9 +45,14 @@ export type Reminder = {
 };
 
 export type Hand = "codex" | "claude";
+export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string };
 export type Settings = {
   apiKey: string;
+  apiMode: "official" | "custom";
   provider: string;
+  presets: ApiPreset[];
+  activePresetId: string;
+  officialKeyMasks: Record<string, string>;
   proxyUrl: string;
   anthropicWorkspaceId: string;
   codexEnabled: boolean;
@@ -78,7 +83,11 @@ const defaultState: State = {
   files: seedFiles,
   settings: {
     apiKey: "",
+    apiMode: "official",
     provider: "openai",
+    presets: [],
+    activePresetId: "",
+    officialKeyMasks: {},
     proxyUrl: "https://api.openai.com/v1",
     anthropicWorkspaceId: "",
     codexEnabled: true,
@@ -162,7 +171,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           settings: {
             ...prev.settings,
             apiKey: "", // Key 不落前端
+            apiMode: cfg.apiMode ?? prev.settings.apiMode,
             provider: cfg.provider ?? prev.settings.provider,
+            presets: cfg.presets ?? prev.settings.presets,
+            activePresetId: cfg.activePresetId ?? prev.settings.activePresetId,
+            officialKeyMasks: cfg.officialKeyMasks ?? prev.settings.officialKeyMasks,
             proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
             anthropicWorkspaceId: cfg.anthropicWorkspaceId ?? prev.settings.anthropicWorkspaceId,
             model: cfg.model ?? prev.settings.model,

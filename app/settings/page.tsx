@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import { PageShell, Segmented, Toggle } from "@/components/Chrome";
 import { IconCheck, IconClose, IconCode, IconHand, IconKey, IconMoon, IconMusic, IconSun, IconWand, IconWifi } from "@/components/Icons";
-import { Hand, useStore } from "@/lib/store";
-import { chatTools } from "@/lib/mock";
+import { Hand, Settings, useStore } from "@/lib/store";
 import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
 
 type TestState = { status: "idle" | "testing" | "ok" | "fail"; msg?: string };
@@ -22,6 +21,17 @@ const OFFICIAL_DEFAULT_MODEL: Record<string, string> = {
   anthropic: "claude-sonnet-4-5",
 };
 
+const PROVIDER_LABEL: Record<string, string> = { openai: "OpenAI", anthropic: "Claude", deepseek: "DeepSeek" };
+
+// 模型列表默认只显示这么多，其余点「查看更多」
+const MODEL_COLLAPSE = 12;
+
+// 计划接入的 MCP 服务（与后端 /api/tools 一致），后期接入
+const MCP_SERVERS = [
+  { id: "amap", name: "高德地图", desc: "地点搜索、路线规划、周边、天气" },
+  { id: "mcdonalds", name: "麦当劳", desc: "门店、菜单、优惠券、点餐" },
+];
+
 // 「Key 也存本机浏览器」的本地存储键
 const LOCAL_KEY = "echo-api-key-local";
 const LOCAL_KEY_PREF = "echo-store-key-locally";
@@ -37,6 +47,9 @@ export default function SettingsPage() {
   const [modelSearch, setModelSearch] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
   const [storeLocally, setStoreLocally] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [presetForm, setPresetForm] = useState<{ id: string; name: string; url: string; apiKey: string } | null>(null);
+  const [savingPreset, setSavingPreset] = useState(false);
 
   // 初始化：读取「是否存浏览器」偏好，若曾存过 Key 则回填输入框；再从后端读 Key 状态（脱敏）
   useEffect(() => {
@@ -47,10 +60,36 @@ export default function SettingsPage() {
         if (savedKey) setKeyInput(savedKey);
       }
     } catch {}
-    api.getSettings().then((cfg) => {
-      if (cfg.hasKey) setKeyMask(cfg.apiKeyMask || "已设置");
-    }).catch(() => {});
+    api.getSettings().then(applyCfg).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 用后端返回的脱敏配置同步接口相关状态
+  function applyCfg(cfg: any) {
+    if (!cfg) return;
+    setKeyMask(cfg.hasKey ? cfg.apiKeyMask || "已设置" : "");
+    set("settings", (s) => ({
+      ...s,
+      apiMode: cfg.apiMode ?? s.apiMode,
+      provider: cfg.provider ?? s.provider,
+      presets: cfg.presets ?? s.presets,
+      activePresetId: cfg.activePresetId ?? s.activePresetId,
+      officialKeyMasks: cfg.officialKeyMasks ?? s.officialKeyMasks,
+      proxyUrl: cfg.proxyUrl ?? s.proxyUrl,
+      model: cfg.model ?? s.model,
+      models: cfg.models ?? s.models,
+    }));
+  }
+
+  // 接口相关的修改：等后端确认后再同步（Key 归属取决于后端当前生效的接口）
+  async function saveApi(patch: Partial<Settings> & Record<string, unknown>) {
+    try {
+      applyCfg(await api.saveSettings(patch));
+      setTest({ status: "idle" });
+    } catch (e) {
+      toast((e as Error).message || "保存失败");
+    }
+  }
 
   // 本地乐观更新 + 异步写后端
   const upd = (p: Partial<typeof settings>) => {
@@ -63,13 +102,44 @@ export default function SettingsPage() {
     api.saveSettings(p).catch((e) => toast(e.message || "保存失败"));
   };
 
-  // 接口类型切换：官方接口自动填好地址并切默认模型；自定义则手填
+  // 官方厂商切换：地址固定，顺带切到该厂商默认模型
   const onProviderChange = (v: string) => {
-    if (v === "custom") { upd({ provider: v }); return; }
     const m = OFFICIAL_DEFAULT_MODEL[v];
     const models = settings.models.includes(m) ? settings.models : [m, ...settings.models];
-    upd({ provider: v, proxyUrl: OFFICIAL_BASES[v], model: m, models });
+    saveApi({ apiMode: "official", provider: v, model: m, models });
   };
+
+  // 自定义预设：新建 / 修改 / 删除 / 选用
+  async function submitPreset() {
+    if (!presetForm) return;
+    const { id, name, url, apiKey } = presetForm;
+    if (!/^https?:\/\//i.test(url.trim())) return toast("接口地址需以 http(s):// 开头");
+    setSavingPreset(true);
+    try {
+      const cfg = id
+        ? await api.updatePreset(id, { name, url, ...(apiKey.trim() ? { apiKey } : {}) })
+        : await api.createPreset({ name, url, apiKey });
+      applyCfg(cfg);
+      setPresetForm(null);
+      setTest({ status: "idle" });
+      toast(id ? "预设已更新" : "预设已保存并选用");
+    } catch (e) {
+      toast((e as Error).message || "保存失败");
+    } finally {
+      setSavingPreset(false);
+    }
+  }
+
+  async function removePreset(id: string, name: string) {
+    if (!window.confirm(`删除预设「${name}」？`)) return;
+    try {
+      applyCfg(await api.deletePreset(id));
+      if (presetForm?.id === id) setPresetForm(null);
+      toast("已删除");
+    } catch (e) {
+      toast((e as Error).message || "删除失败");
+    }
+  }
 
   // 切换「Key 也存本机浏览器」：开启才允许写 Key 到浏览器；关闭即清除浏览器里的 Key
   function toggleStoreLocally(v: boolean) {
@@ -90,8 +160,8 @@ export default function SettingsPage() {
     setSavingKey(true);
     try {
       const cfg = await api.saveSettings({ apiKey: k });
-      setKeyMask(cfg.apiKeyMask || "已设置");
-      if (storeLocally) {
+      applyCfg(cfg);
+      if (storeLocally && settings.apiMode === "official") {
         try { localStorage.setItem(LOCAL_KEY, k); } catch {}
         setKeyInput(k); // 保留在输入框，刷新也能看到
         toast("API Key 已保存到后端和本机浏览器");
@@ -138,7 +208,18 @@ export default function SettingsPage() {
 
   const noneEnabled = !settings.codexEnabled && !settings.claudeEnabled;
   const q = modelSearch.trim().toLowerCase();
-  const visibleModels = settings.models.filter((md) => !q || md.toLowerCase().includes(q));
+  const matchedModels = settings.models.filter((md) => !q || md.toLowerCase().includes(q));
+  const collapsed = !showAllModels && matchedModels.length > MODEL_COLLAPSE;
+  const visibleModels = collapsed
+    ? (() => {
+        const head = matchedModels.slice(0, MODEL_COLLAPSE);
+        // 当前模型排在后面时也保证能看到
+        return head.includes(settings.model) || !matchedModels.includes(settings.model) ? head : [settings.model, ...head.slice(0, -1)];
+      })()
+    : matchedModels;
+  const custom = settings.apiMode === "custom";
+  const activePreset = settings.presets.find((p) => p.id === settings.activePresetId);
+  const keyOwner = custom ? (activePreset ? `预设「${activePreset.name}」` : "") : `官方 ${PROVIDER_LABEL[settings.provider] || settings.provider}`;
 
   return (
     <PageShell title="设置">
@@ -151,54 +232,109 @@ export default function SettingsPage() {
           </div>
           <div className="block-white space-y-3 rounded-[26px] p-4">
             <div>
-              <span className="mb-1.5 block text-[14px] text-mute">接口类型（官方 Key / 自定义代理都支持）</span>
+              <span className="mb-1.5 block text-[14px] text-mute">接口类型</span>
               <Segmented<string>
-                value={settings.provider}
-                onChange={onProviderChange}
+                value={settings.apiMode}
+                onChange={(v) => saveApi({ apiMode: v as Settings["apiMode"] })}
                 options={[
-                  { value: "openai", label: "官方 OpenAI" },
-                  { value: "anthropic", label: "官方 Claude" },
-                  { value: "deepseek", label: "官方 DeepSeek" },
-                  { value: "custom", label: "自定义" },
+                  { value: "official", label: "官方 API" },
+                  { value: "custom", label: "自定义 API" },
                 ]}
               />
             </div>
-            <label className="block">
-              <span className="mb-1.5 flex items-center gap-1.5 text-[14px] text-mute"><IconKey size={16} /> API Key</span>
-              <div className="flex gap-2">
-                <input
-                  type={showKey ? "text" : "password"}
-                  value={keyInput}
-                  onChange={(e) => setKeyInput(e.target.value)}
-                  placeholder={keyMask ? `已设置 ${keyMask}，输入新 Key 可替换` : "sk-…（只保存在后端）"}
-                  autoComplete="off"
-                  className="field"
+
+            {!custom && (
+              <div className="space-y-2">
+                <Segmented<string>
+                  value={settings.provider}
+                  onChange={onProviderChange}
+                  options={[
+                    { value: "openai", label: "OpenAI" },
+                    { value: "anthropic", label: "Claude" },
+                    { value: "deepseek", label: "DeepSeek" },
+                  ]}
                 />
-                <button onClick={() => setShowKey((v) => !v)} className="btn-ghost shrink-0 px-4 text-[15px]">{showKey ? "隐藏" : "显示"}</button>
+                <p className="break-all px-1 font-mono text-[12px] text-mute">{OFFICIAL_BASES[settings.provider]}</p>
               </div>
-            </label>
-            <button onClick={saveKey} disabled={savingKey || !keyInput.trim()} className="btn-ghost w-full py-2.5 text-[15px] disabled:opacity-40">
-              {savingKey ? "保存中…" : "保存 Key 到后端"}
-            </button>
-            {!ECHO_AUTH_ENABLED && <div className="flex items-center justify-between gap-3 rounded-2xl bg-fog/60 px-3 py-2.5">
+            )}
+
+            {custom && (
+              <div className="space-y-2">
+                {settings.presets.length === 0 && !presetForm && (
+                  <p className="rounded-2xl bg-fog px-4 py-3 text-[14px] text-mute">还没有预设，新建一个填上地址和 Key</p>
+                )}
+                {settings.presets.map((p) => (
+                  <div key={p.id} className={`flex items-center gap-2 rounded-2xl px-3 py-2.5 ${p.id === settings.activePresetId ? "bg-sakura/30" : "bg-fog/60"}`}>
+                    <button
+                      aria-pressed={p.id === settings.activePresetId}
+                      onClick={() => p.id !== settings.activePresetId && saveApi({ activePresetId: p.id })}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <p className={`truncate text-[15px] ${p.id === settings.activePresetId ? "font-semibold text-rose" : ""}`}>{p.name}</p>
+                      <p className="truncate font-mono text-[12px] text-mute">{p.url}</p>
+                      <p className="text-[12px] text-mute">{p.hasKey ? `Key ${p.keyMask}` : "未填 Key"}</p>
+                    </button>
+                    <button onClick={() => setPresetForm({ id: p.id, name: p.name, url: p.url, apiKey: "" })} className="btn-ghost shrink-0 px-3 py-1.5 text-[13px]">编辑</button>
+                    <button aria-label={`删除 ${p.name}`} onClick={() => removePreset(p.id, p.name)} className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-mute">
+                      <IconClose size={14} />
+                    </button>
+                  </div>
+                ))}
+                {presetForm ? (
+                  <div className="space-y-2 rounded-2xl bg-fog/60 p-3">
+                    <p className="text-[14px] font-medium">{presetForm.id ? "编辑预设" : "新建预设"}</p>
+                    <input value={presetForm.name} onChange={(e) => setPresetForm({ ...presetForm, name: e.target.value })} placeholder="名字，如 Serein" autoCapitalize="off" className="field" />
+                    <input value={presetForm.url} onChange={(e) => setPresetForm({ ...presetForm, url: e.target.value })} placeholder="https://example.com/v1" inputMode="url" autoCapitalize="off" className="field font-mono" />
+                    <input
+                      type="password"
+                      value={presetForm.apiKey}
+                      onChange={(e) => setPresetForm({ ...presetForm, apiKey: e.target.value })}
+                      placeholder={presetForm.id ? "留空表示不改 Key" : "API Key（只保存在后端）"}
+                      autoComplete="off"
+                      className="field"
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={() => setPresetForm(null)} className="btn-ghost flex-1 py-2.5 text-[15px]">取消</button>
+                      <button onClick={submitPreset} disabled={savingPreset || !presetForm.url.trim()} className="btn-primary flex-1 py-2.5 text-[15px] disabled:opacity-50">
+                        {savingPreset ? "保存中…" : "保存预设"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setPresetForm({ id: "", name: "", url: "", apiKey: "" })} className="btn-ghost w-full py-2.5 text-[15px]">＋ 新建预设</button>
+                )}
+              </div>
+            )}
+
+            {(!custom || activePreset) && (
+              <>
+                <label className="block">
+                  <span className="mb-1.5 flex items-center gap-1.5 text-[14px] text-mute"><IconKey size={16} /> {keyOwner} 的 API Key</span>
+                  <div className="flex gap-2">
+                    <input
+                      type={showKey ? "text" : "password"}
+                      value={keyInput}
+                      onChange={(e) => setKeyInput(e.target.value)}
+                      placeholder={keyMask ? `已设置 ${keyMask}，输入新 Key 可替换` : "sk-…（只保存在后端）"}
+                      autoComplete="off"
+                      className="field"
+                    />
+                    <button onClick={() => setShowKey((v) => !v)} className="btn-ghost shrink-0 px-4 text-[15px]">{showKey ? "隐藏" : "显示"}</button>
+                  </div>
+                </label>
+                <button onClick={saveKey} disabled={savingKey || !keyInput.trim()} className="btn-ghost w-full py-2.5 text-[15px] disabled:opacity-40">
+                  {savingKey ? "保存中…" : "保存 Key 到后端"}
+                </button>
+              </>
+            )}
+            {!ECHO_AUTH_ENABLED && !custom && <div className="flex items-center justify-between gap-3 rounded-2xl bg-fog/60 px-3 py-2.5">
               <div className="flex-1">
                 <p className="text-[14px]">Key 也存本机浏览器</p>
                 <p className="text-[12px] text-mute">{storeLocally ? "刷新后自动回填到输入框" : "默认只存后端，浏览器不留 Key"}</p>
               </div>
               <Toggle label="存本机浏览器" on={storeLocally} onChange={toggleStoreLocally} />
             </div>}
-            <label className="block">
-              <span className="mb-1.5 block text-[14px] text-mute">接口地址（官方类型已自动填好，改地址会自动切回自定义）</span>
-              <input
-                value={settings.proxyUrl}
-                onChange={(e) => upd({ proxyUrl: e.target.value, provider: "custom" })}
-                placeholder="http://192.168.1.10:8080/v1"
-                inputMode="url"
-                autoCapitalize="off"
-                className="field"
-              />
-            </label>
-            {settings.provider === "anthropic" && (
+            {!custom && settings.provider === "anthropic" && (
               <label className="block">
                 <span className="mb-1.5 block text-[14px] text-mute">Workspace ID（可选 · 未绑定工作区的 Key 才需要）</span>
                 <input
@@ -247,6 +383,11 @@ export default function SettingsPage() {
               ))}
               {visibleModels.length === 0 && <p className="text-[13px] text-mute">没有匹配的模型</p>}
             </div>
+            {matchedModels.length > MODEL_COLLAPSE && (
+              <button onClick={() => setShowAllModels((v) => !v)} className="w-full rounded-2xl py-2 text-[14px] text-rose">
+                {collapsed ? `查看更多（还有 ${matchedModels.length - visibleModels.length} 个）` : "收起"}
+              </button>
+            )}
             <div className="flex gap-2">
               <input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder="添加模型名，如 gpt-4o-mini" autoCapitalize="off" className="field font-mono" />
               <button
@@ -293,21 +434,17 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* MCP 工具 */}
+        {/* MCP 服务 */}
         <section>
-          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">MCP 工具 · 默认走 API</h2>
+          <h2 className="mb-2 px-1 text-[15px] font-semibold text-mute">MCP 服务</h2>
           <div className="block-white divide-y divide-line overflow-hidden rounded-[26px]">
-            {chatTools.map((t) => (
-              <div key={t.id} className="flex items-center gap-3 px-4 py-3">
+            {MCP_SERVERS.map((m) => (
+              <div key={m.id} className="flex items-center gap-3 px-4 py-3">
                 <div className="flex-1">
-                  <p className="text-[16px]">{t.label}</p>
-                  <p className="text-[12px] text-mute">默认走 API · 开动手后走后端</p>
+                  <p className="text-[16px]">{m.name}</p>
+                  <p className="text-[12px] text-mute">{m.desc}</p>
                 </div>
-                <Toggle
-                  label={`启用${t.label}`}
-                  on={settings.tools[t.id] !== false}
-                  onChange={(v) => upd({ tools: { ...settings.tools, [t.id]: v } })}
-                />
+                <span className="shrink-0 rounded-capsule bg-fog px-2.5 py-0.5 text-[12px] text-mute">后期接入</span>
               </div>
             ))}
           </div>

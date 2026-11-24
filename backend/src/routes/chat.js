@@ -8,6 +8,21 @@ const MAX_HISTORY = 20;
 /** 归一化 base url：去掉末尾斜杠 */
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
 
+/** 从 OpenAI / New API / Serein（FastAPI detail）风格的错误体里取出可读原因 */
+function upstreamErrorMessage(text) {
+  try {
+    const j = JSON.parse(text);
+    const m =
+      j?.error?.message ??
+      (typeof j?.detail === "string" ? j.detail : j?.detail?.message) ??
+      j?.message ??
+      (typeof j?.error === "string" ? j.error : "");
+    return typeof m === "string" ? m.slice(0, 200) : "";
+  } catch {
+    return "";
+  }
+}
+
 export default async function chatRoute(app) {
   // 读取历史聊天记录（供前端初始化）
   app.get("/api/chat/history", async () => {
@@ -26,7 +41,7 @@ export default async function chatRoute(app) {
     const base = normBase(cfg.proxyUrl);
     if (!/^https?:\/\//i.test(base)) {
       reply.code(400);
-      return { error: "bad_base", message: "代理地址需以 http(s):// 开头" };
+      return { error: "bad_base", message: "还没选择接口，或接口地址不是 http(s):// 开头" };
     }
 
     const body = req.body || {};
@@ -52,6 +67,13 @@ export default async function chatRoute(app) {
       }
     } catch {}
 
+    // 前端点「停止生成」或断网时，同步取消上游请求，避免网关继续生成并计费
+    const upstreamAbort = new AbortController();
+    const onClientClose = () => {
+      if (!reply.raw.writableFinished) upstreamAbort.abort();
+    };
+    reply.raw.on("close", onClientClose);
+
     let upstream;
     try {
       upstream = await fetch(`${base}/chat/completions`, {
@@ -61,48 +83,71 @@ export default async function chatRoute(app) {
           ...authHeaders(cfg), // Key 仅在后端使用；Anthropic 额外带 workspace-id
         },
         body: JSON.stringify({ model, messages, stream: true }),
+        signal: upstreamAbort.signal,
       });
     } catch (e) {
+      reply.raw.off("close", onClientClose);
       reply.code(502);
       return { error: "connect_failed", message: "连不上模型接口：" + e.message };
     }
 
     if (!upstream.ok || !upstream.body) {
+      reply.raw.off("close", onClientClose);
       const detail = await upstream.text().catch(() => "");
       reply.code(upstream.status || 502);
-      return { error: "upstream", message: `模型接口返回 ${upstream.status}`, detail: detail.slice(0, 300) };
+      const reason = upstreamErrorMessage(detail);
+      return {
+        error: "upstream",
+        message: `模型接口返回 ${upstream.status}${reason ? "：" + reason : ""}`,
+        detail: detail.slice(0, 300),
+      };
     }
 
-    reply.raw.writeHead(200, {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
+    // 响应头延迟到第一段正文再发：开头就出错时还能返回带原因的错误码
+    let headersSent = false;
+    const sendHeaders = () => {
+      if (headersSent) return;
+      headersSent = true;
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+    };
 
     // 解析 SSE，提取 delta 文本并原样透传给前端
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let streamError = "";
 
     const pushDelta = (data) => {
       // data 为单个 SSE 的 data: 载荷
-      if (data === "[DONE]") return;
+      if (data === "[DONE]" || streamError) return;
+      let json;
       try {
-        const json = JSON.parse(data);
-        const delta = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content ?? "";
-        if (delta) {
-          fullText += delta;
-          reply.raw.write(delta);
-        }
+        json = JSON.parse(data);
       } catch {
-        // 非 JSON 行忽略
+        return; // 非 JSON 行忽略
+      }
+      // 网关在流中途下发的错误事件（如上游过载、额度用尽）
+      if (json?.error) {
+        streamError = upstreamErrorMessage(JSON.stringify(json)) || "模型接口在生成中途出错";
+        return;
+      }
+      const delta = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content ?? "";
+      if (delta) {
+        sendHeaders();
+        fullText += delta;
+        reply.raw.write(delta);
       }
     };
 
+    let interrupted = false;
     try {
-      while (true) {
+      while (!streamError) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -114,10 +159,25 @@ export default async function chatRoute(app) {
           pushDelta(t.slice(5).trim());
         }
       }
-      if (buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
+      if (!streamError && buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
     } catch (e) {
-      // 上游中断：把已收到的内容返回，前端可据此重试
+      // 上游中断或前端停止：保留已收到的内容
+      interrupted = true;
     } finally {
+      reply.raw.off("close", onClientClose);
+      if (streamError || interrupted) reader.cancel().catch(() => {});
+    }
+
+    const stopped = upstreamAbort.signal.aborted;
+    if (streamError && !headersSent && !stopped) {
+      // 还没输出正文：直接返回错误，前端显示原因并可重试
+      reply.code(502);
+      reply.send({ error: "upstream", message: streamError });
+    } else if ((streamError || interrupted) && !stopped) {
+      // 已输出部分正文：中断连接，让前端进入「失败可重试」而不是当成正常完成
+      reply.raw.destroy(new Error(streamError || "upstream interrupted"));
+    } else if (!reply.raw.destroyed) {
+      sendHeaders();
       reply.raw.end();
     }
 
@@ -125,7 +185,8 @@ export default async function chatRoute(app) {
     try {
       if (fullText) {
         const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-        chat.messages.push({ id: uid(), role: "echo", text: fullText, at: Date.now(), status: "done" });
+        const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
+        chat.messages.push({ id: uid(), role: "echo", text: fullText, at: Date.now(), status });
         await writeJSON(paths.chat(DATA_DIR), chat);
       }
     } catch {}

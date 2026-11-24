@@ -1,42 +1,45 @@
-// 设置接口：Key / 代理地址只经后端读写（GET 返回脱敏，PUT 保存，POST /test 真实连通测试）
-import { getConfig, saveConfig, publicConfig, authHeaders } from "../config.js";
+// 设置接口：Key / 接口地址只经后端读写（GET 返回脱敏，PUT 保存，预设增删改，POST /test 真实连通测试）
+import {
+  getConfig,
+  getRawConfig,
+  applySettingsPatch,
+  createPreset,
+  updatePreset,
+  deletePreset,
+  publicConfig,
+  authHeaders,
+} from "../config.js";
 
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
 
+/** 统一把参数错误转成 400 + message */
+async function guarded(reply, fn) {
+  try {
+    return publicConfig(await fn());
+  } catch (e) {
+    reply.code(400);
+    return { error: "bad_request", message: e.message || "参数不合法" };
+  }
+}
+
 export default async function settingsRoute(app) {
   // 读设置（Key 脱敏）
-  app.get("/api/settings", async () => {
-    const cfg = await getConfig();
-    return publicConfig(cfg);
-  });
+  app.get("/api/settings", async () => publicConfig(await getRawConfig()));
 
-  // 保存设置。apiKey 传空字符串表示清除；不传则不改动
-  app.put("/api/settings", async (req) => {
-    const body = req.body || {};
-    const patch = {};
-    if (typeof body.apiKey === "string") patch.apiKey = body.apiKey.trim();
-    if (typeof body.proxyUrl === "string") patch.proxyUrl = body.proxyUrl.trim();
-    if (typeof body.provider === "string") patch.provider = body.provider;
-    if (typeof body.anthropicWorkspaceId === "string") patch.anthropicWorkspaceId = body.anthropicWorkspaceId.trim();
-    if (typeof body.model === "string") patch.model = body.model;
-    if (Array.isArray(body.models)) patch.models = body.models;
-    if (body.codexEnabled !== undefined) patch.codexEnabled = !!body.codexEnabled;
-    if (body.claudeEnabled !== undefined) patch.claudeEnabled = !!body.claudeEnabled;
-    if (body.defaultHand !== undefined) patch.defaultHand = body.defaultHand;
-    if (body.quietThink !== undefined) patch.quietThink = !!body.quietThink;
-    if (body.showStatusBar !== undefined) patch.showStatusBar = !!body.showStatusBar;
-    if (body.mute !== undefined) patch.mute = !!body.mute;
-    if (body.tools && typeof body.tools === "object") patch.tools = body.tools;
-    const next = await saveConfig(patch);
-    return publicConfig(next);
-  });
+  // 保存设置。apiKey 写入当前生效的官方厂商或当前预设；空字符串表示清除，不传则不改
+  app.put("/api/settings", async (req, reply) => guarded(reply, () => applySettingsPatch(req.body || {})));
+
+  // 自定义预设：新建（自动设为当前）/ 修改 / 删除
+  app.post("/api/presets", async (req, reply) => guarded(reply, () => createPreset(req.body || {})));
+  app.put("/api/presets/:id", async (req, reply) => guarded(reply, () => updatePreset(req.params.id, req.body || {})));
+  app.delete("/api/presets/:id", async (req, reply) => guarded(reply, () => deletePreset(req.params.id)));
 
   // 拉取模型列表：走后端请求 {base}/models，支持 ?q= 前端/接口搜索过滤
   app.get("/api/models", async (req) => {
     const cfg = await getConfig();
     if (!cfg.apiKey) return { error: "no_key", message: "还没填 API Key", models: [] };
     const base = normBase(cfg.proxyUrl);
-    if (!/^https?:\/\//i.test(base)) return { error: "bad_base", message: "接口地址需以 http(s):// 开头", models: [] };
+    if (!/^https?:\/\//i.test(base)) return { error: "bad_base", message: "还没选择接口，或接口地址不是 http(s):// 开头", models: [] };
     try {
       const res = await fetch(`${base}/models`, {
         headers: authHeaders(cfg),
@@ -61,7 +64,7 @@ export default async function settingsRoute(app) {
     const cfg = await getConfig();
     if (!cfg.apiKey) return { ok: false, message: "还没填 API Key" };
     const base = normBase(cfg.proxyUrl);
-    if (!/^https?:\/\//i.test(base)) return { ok: false, message: "代理地址需以 http(s):// 开头" };
+    if (!/^https?:\/\//i.test(base)) return { ok: false, message: "还没选择接口，或接口地址不是 http(s):// 开头" };
     const started = Date.now();
     try {
       const res = await fetch(`${base}/models`, {
