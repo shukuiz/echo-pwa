@@ -119,6 +119,9 @@ class GlassEngine {
   // 登记可能早于 init（子组件的 layout effect 先跑），所以观察器一开始就建好
   private ro: ResizeObserver | null = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => this.invalidate()) : null;
 
+  private mobileBudget = false;
+  private lastPaint = -Infinity;
+
   init(canvas: HTMLCanvasElement) {
     if (this.canvas === canvas) return;
     this.canvas = canvas;
@@ -127,11 +130,9 @@ class GlassEngine {
     mq?.addEventListener?.("change", (e) => { this.rm = e.matches; this.applyClasses(); this.invalidate(); });
     let gl: WebGLRenderingContext | null = null;
     // iPad can report a desktop user agent even in an installed PWA.
-    const appleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent)
+    this.mobileBudget = /iPhone|iPad|iPod/.test(navigator.userAgent)
       || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    if (!appleMobile) {
-      try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: false, powerPreference: "low-power" }); } catch {}
-    }
+    try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: false, powerPreference: "low-power" }); } catch {}
     if (gl) {
       try {
         const sh = (type: number, src: string) => {
@@ -193,7 +194,7 @@ class GlassEngine {
     const r = (this.drawable() ? cv : pr).getBoundingClientRect();
     const w = r.width || document.documentElement.clientWidth || innerWidth, h = r.height || document.documentElement.clientHeight || innerHeight;
     const b = this.basis, changed = b.w !== w || b.h !== h || b.left !== r.left || b.top !== r.top;
-    const d = this.gl ? Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(900_000 / (w * h))) : 0;
+    const d = this.gl ? Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt((this.mobileBudget ? 200_000 : 900_000) / (w * h))) : 0;
     const bw = Math.max(1, Math.round(w * d)), bh = Math.max(1, Math.round(h * d));
     if (changed || cv.width !== bw || cv.height !== bh) {
       this.basis = { left: r.left, top: r.top, w, h };
@@ -317,7 +318,11 @@ class GlassEngine {
       // 自检（不是靠它对齐，对齐靠上面的各种事件）：静止时每 0.5 秒量一下探针，iOS 偶尔改了视口却不发 resize
       const now = performance.now();
       if (!moving && now - this.lastCheck > 500) { this.lastCheck = now; if (this.resize()) this.home?.sync?.(); }
-      if (this.look?.motion || this.needDraw) { this.needDraw = false; this.draw(); }
+      if (this.needDraw || (this.look?.motion && (!this.mobileBudget || now - this.lastPaint >= 40))) {
+        this.needDraw = false;
+        this.lastPaint = now;
+        this.draw();
+      }
     }
     if ((drawing && this.look?.motion) || this.tickers.size) this.kick();
   };
@@ -326,7 +331,7 @@ class GlassEngine {
   }
 
   private readRegs() {
-    if (!this.rectsDirty) return;
+    if (!this.rectsDirty && !this.mobileBudget) return;
     this.rectsDirty = false;
     this.resize();
     this.home?.sync?.();
