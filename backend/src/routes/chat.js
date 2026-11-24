@@ -8,11 +8,15 @@ const MAX_HISTORY = 20;
 /** 归一化 base url：去掉末尾斜杠 */
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
 
-/** 从 OpenAI / New API 风格的错误体里取出可读原因 */
+/** 从 OpenAI / New API / Serein（FastAPI detail）风格的错误体里取出可读原因 */
 function upstreamErrorMessage(text) {
   try {
     const j = JSON.parse(text);
-    const m = j?.error?.message ?? j?.message ?? (typeof j?.error === "string" ? j.error : "");
+    const m =
+      j?.error?.message ??
+      (typeof j?.detail === "string" ? j.detail : j?.detail?.message) ??
+      j?.message ??
+      (typeof j?.error === "string" ? j.error : "");
     return typeof m === "string" ? m.slice(0, 200) : "";
   } catch {
     return "";
