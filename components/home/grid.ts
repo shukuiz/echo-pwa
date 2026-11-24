@@ -108,7 +108,7 @@ export class HomeGrid {
     const inner = G.W - G.pad * 2;
     G.cw = (inner - G.cg * 3) / 4; G.rp = G.cw + G.cg;
     const H = this.pager.clientHeight || 660;
-    G.rpp = Math.max(4, Math.floor((H - G.top - 86) / G.rp) + 1);
+    G.rpp = Math.max(2, Math.floor((H - G.top + 6) / G.rp));
     const pr = this.pager.getBoundingClientRect(); G.px = pr.left; G.py = pr.top;
   }
   /** 引擎重读位置前调用：重量网格原点（430 居中容器的左偏移、状态栏高度都在这里），尺寸变了就整页重排 */
@@ -164,16 +164,16 @@ export class HomeGrid {
 
   // ---------- 给玻璃引擎的数据 ----------
   entries = (): Entry[] => {
-    const G = this.G, PG = this.PG, out: Entry[] = [], live = performance.now() < G.animUntil, B = engine.basis, vw = B.left + (B.w || innerWidth), vh = B.top + (B.h || innerHeight);
-    for (const c of G.cells) {
+    const out: Entry[] = [];
+    const pager = this.pager.getBoundingClientRect();
+    for (const c of this.G.cells) {
       if (this.drag && c.el === this.drag.el) continue;
-      let x: number, y: number;
-      const w = c.w, h = c.h;
-      if (live) { const r = c.g.getBoundingClientRect(); x = r.left + (r.width - w) / 2; y = r.top + (r.height - h) / 2; } // 重排动画那 0.35 秒里读真实位置（这时没有在滑动）
-      else { x = G.px + PG.xNow + c.bx + c.ox; y = G.py + c.by + c.oy; }
-      const vis = Math.min(x + w, vw) - Math.max(x, B.left);
-      if (vis <= 0 || y > vh || y + h < B.top) { c.g.removeAttribute("data-cssg"); continue; }
-      out.push({ el: c.g, x, y, w, h, clip: null, vis: vis * h });
+      const box = c.g.getBoundingClientRect();
+      const width = Math.min(box.right, pager.right) - Math.max(box.left, pager.left);
+      const height = Math.min(box.bottom, pager.bottom) - Math.max(box.top, pager.top);
+      if (width <= 0 || height <= 0) continue;
+      out.push({ el: c.g, x: box.left, y: box.top, w: box.width, h: box.height,
+        clip: [pager.top, pager.bottom], clipX: [pager.left, pager.right], vis: width * height });
     }
     return out;
   };

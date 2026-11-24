@@ -375,10 +375,17 @@ export default function SettingsPage() {
                 {loadingModels ? "拉取中…" : "拉取模型"}
               </button>
             </div>
-            <div id="chat-model-list" aria-label="聊天模型列表" tabIndex={showAllModels ? 0 : undefined} className={`flex flex-wrap content-start gap-2 ${showAllModels ? "model-list-scroll" : ""}`}>
+            {matchedModels.length > MODEL_COLLAPSE && (
+              <button aria-expanded={showAllModels} aria-controls="chat-model-list" onClick={() => setShowAllModels((v) => !v)} className="w-full rounded-2xl py-2 text-[14px] text-rose">
+                {collapsed ? `查看更多（共 ${matchedModels.length} 个）` : "收起模型列表"}
+              </button>
+            )}
+            <div key={q} id="chat-model-list" role="region" aria-label="聊天模型列表" tabIndex={showAllModels ? 0 : undefined}
+              className={showAllModels ? "model-list-scroll rounded-2xl border border-line p-2" : undefined}>
+              <div className={showAllModels ? "grid gap-1.5" : "flex flex-wrap content-start gap-2"}>
               {visibleModels.map((md) => (
-                <span key={md} className={`flex min-w-0 max-w-full items-center gap-1 rounded-capsule py-1.5 pl-3 pr-1.5 font-mono text-[13px] ${md === settings.model ? "bg-sakura/35 text-rose" : "bg-fog text-ink/80"}`}>
-                  <button aria-pressed={md === settings.model} className="min-w-0 break-all text-left" onClick={() => upd({ model: md })}>{md}</button>
+                <span key={md} className={`flex min-w-0 max-w-full items-center gap-1 rounded-2xl px-2.5 font-mono text-[13px] ${md === settings.model ? "bg-sakura/35 text-rose" : "bg-fog text-ink/80"}`}>
+                  <button aria-pressed={md === settings.model} className={`min-w-0 break-all py-2 text-left ${showAllModels ? "min-h-10 flex-1" : ""}`} onClick={() => upd({ model: md })}>{md}</button>
                   <button
                     aria-label={`移除 ${md}`}
                     onClick={() => {
@@ -393,12 +400,8 @@ export default function SettingsPage() {
                 </span>
               ))}
               {visibleModels.length === 0 && <p className="text-[13px] text-mute">没有匹配的模型</p>}
+              </div>
             </div>
-            {matchedModels.length > MODEL_COLLAPSE && (
-              <button aria-expanded={showAllModels} aria-controls="chat-model-list" onClick={() => setShowAllModels((v) => !v)} className="w-full rounded-2xl py-2 text-[14px] text-rose">
-                {collapsed ? `查看更多（还有 ${matchedModels.length - visibleModels.length} 个）` : "收起"}
-              </button>
-            )}
             <div className="flex gap-2">
               <input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder="添加模型名，如 gpt-4o-mini" autoCapitalize="off" className="field font-mono" />
               <button

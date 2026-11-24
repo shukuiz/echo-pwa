@@ -7,6 +7,33 @@ const MAX_HISTORY = 20;
 
 /** 归一化 base url：去掉末尾斜杠 */
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
+const plainText = (value) => typeof value === "string" ? value : "";
+
+function chatDeltas(payload) {
+  if (payload.type === "response.reasoning_summary_text.delta") return { thought: plainText(payload.delta) };
+  if (payload.type === "response.output_text.delta") return { content: plainText(payload.delta) };
+  if (payload.delta?.type === "thinking_delta") return { thought: plainText(payload.delta.thinking) };
+  if (payload.delta?.type === "text_delta") return { content: plainText(payload.delta.text) };
+
+  const choice = payload.choices?.[0];
+  const event = choice?.delta ?? choice?.message;
+  const parts = Array.isArray(event?.content) ? event.content : payload.candidates?.[0]?.content?.parts;
+  const isThought = (part) => part?.thought === true || part?.type === "thinking" || part?.type === "reasoning";
+  const thoughtParts = Array.isArray(parts)
+    ? parts.filter(isThought).map((part) => plainText(part.thinking ?? part.text)).join("")
+    : "";
+  const details = Array.isArray(event?.reasoning_details)
+    ? event.reasoning_details.map((part) => part?.type === "reasoning.summary" ? plainText(part.summary)
+      : part?.type === "reasoning.text" ? plainText(part.text) : "").join("")
+    : "";
+  return {
+    thought: details || plainText(event?.reasoning_content) || plainText(event?.reasoning) ||
+      plainText(event?.thinking) || plainText(event?.reasoning_summary) || thoughtParts,
+    content: plainText(event?.content) || (Array.isArray(parts)
+      ? parts.filter((part) => !isThought(part)).map((part) => plainText(part?.text)).join("")
+      : ""),
+  };
+}
 
 /** 从 OpenAI / New API / Serein（FastAPI detail）风格的错误体里取出可读原因 */
 function upstreamErrorMessage(text) {
@@ -48,6 +75,8 @@ export default async function chatRoute(app) {
     const structured = body.streamFormat === "ndjson";
     const incoming = Array.isArray(body.messages) ? body.messages : [];
     const model = body.model || cfg.model;
+    const useResponses = cfg.provider === "openai" && typeof model === "string" &&
+      /^(?:gpt-[56](?:[.\-]|$)|o[134](?:-|$))/i.test(model) && !/-(?:chat|codex)(?:-|$)/i.test(model);
 
     // 最近 20 条历史（含本次用户消息），映射为 OpenAI 消息格式
     const history = incoming.slice(-MAX_HISTORY).map((m) => ({
@@ -77,13 +106,15 @@ export default async function chatRoute(app) {
 
     let upstream;
     try {
-      upstream = await fetch(`${base}/chat/completions`, {
+      upstream = await fetch(`${base}${useResponses ? "/responses" : "/chat/completions"}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...authHeaders(cfg), // Key 仅在后端使用；Anthropic 额外带 workspace-id
         },
-        body: JSON.stringify({ model, messages, stream: true }),
+        body: JSON.stringify(useResponses
+          ? { model, input: messages, stream: true, reasoning: { summary: "auto" }, store: false }
+          : { model, messages, stream: true }),
         signal: upstreamAbort.signal,
       });
     } catch (e) {
@@ -142,28 +173,30 @@ export default async function chatRoute(app) {
         return; // 非 JSON 行忽略
       }
       // 网关在流中途下发的错误事件（如上游过载、额度用尽）
-      if (json?.error) {
-        streamError = upstreamErrorMessage(JSON.stringify(json)) || "模型接口在生成中途出错";
+      if (json?.error || json?.type === "response.failed") {
+        streamError = upstreamErrorMessage(JSON.stringify(json.response ?? json)) || "模型接口在生成中途出错";
         return;
       }
-      const event = json.choices?.[0]?.delta ?? json.choices?.[0]?.message;
-      const thought = event?.reasoning_content ?? event?.reasoning;
-      if (typeof thought === "string" && thought) {
+      if (!json || typeof json !== "object") return;
+      const { thought, content } = chatDeltas(json);
+      if (thought) {
         reasoning += thought;
         if (structured) writeDelta("reasoning", thought);
       }
-      if (typeof event?.content === "string" && event.content) {
-        fullText += event.content;
-        writeDelta("content", event.content);
+      if (content) {
+        fullText += content;
+        writeDelta("content", content);
       }
     };
 
     let interrupted = false;
     try {
+      const jsonResponse = upstream.headers.get("content-type")?.includes("application/json");
       while (!streamError) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
+        if (jsonResponse) continue;
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
@@ -173,7 +206,8 @@ export default async function chatRoute(app) {
         }
       }
       buffer += decoder.decode();
-      if (!streamError && buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
+      if (!streamError && jsonResponse) pushDelta(buffer);
+      else if (!streamError && buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
     } catch (e) {
       // 上游中断或前端停止：保留已收到的内容
       interrupted = true;

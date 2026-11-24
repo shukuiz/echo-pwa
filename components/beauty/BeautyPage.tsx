@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Beauty, FCOLS, ICOLS, MES, PRESETS, SLIDERS, TINTS, useBeauty } from "@/lib/beauty";
+import { Beauty, DEFAULT_ACCENT, FCOLS, ICOLS, MES, PRESETS, SLIDERS, TINTS, useBeauty } from "@/lib/beauty";
 import { useStore } from "@/lib/store";
 import { delBlob, downscale, putBlob, useBlobUrl } from "@/lib/idb";
 import { engine } from "@/components/glass/engine";
@@ -114,6 +114,11 @@ export default function BeautyPage() {
           <Swatches label="色调" list={TINTS} value={b.tint} onPick={(c) => setB({ tint: c })} />
           <div style={{ marginTop: 8 }}><Slider label="浓度" value={b.P.tint} max={80} onChange={(v) => P("tint", v)} /></div>
           <p className="hint">玻璃染上这个颜色，{b.inkMode === "auto" ? "文字会自己挑深色或浅色，保证看得清" : "字色用你在「字体颜色」里选的"}</p>
+        </Card>
+
+        <Card icon="palette" title="桌面重点色">
+          <Swatches label="桌面重点色" list={[["默认", DEFAULT_ACCENT], ["冰蓝", "#2367ad"], ["苔绿", "#41745b"], ["雾紫", "#75529c"]]}
+            value={b.accent} onPick={(accent) => setB({ accent })} />
         </Card>
 
         <Card icon="type2" title="字体颜色" id="inkcard">

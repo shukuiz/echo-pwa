@@ -297,12 +297,12 @@ function Chat() {
           onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}
           className="mute flex items-center gap-1.5 text-[12px]"
           role="switch"
-          aria-checked={quiet}
-          aria-label="安静思考"
+          aria-checked={!quiet}
+          aria-label="自动展开思考"
         >
-          {busy ? "忙碌中 · " : ""}安静思考
-          <span className={`relative h-[16px] w-[28px] rounded-capsule transition ${quiet ? "bg-sakura" : "bg-orb/35"}`}>
-            <span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white transition-all ${quiet ? "left-[14px]" : "left-[2px]"}`} />
+          {busy ? "忙碌中 · " : ""}自动展开思考
+          <span className={`relative h-[16px] w-[28px] rounded-capsule transition ${!quiet ? "bg-rose" : "bg-orb/35"}`}>
+            <span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white transition-all ${!quiet ? "left-[14px]" : "left-[2px]"}`} />
           </span>
         </button>
       }
@@ -340,7 +340,7 @@ function Chat() {
           <p className="pt-20 text-center" data-onwp>和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
         )}
         {messages.map((m) => (
-          <Bubble key={m.id} m={m} quiet={quiet} onTap={openMenu} onRetry={() => retry(m.id)} />
+          <Bubble key={m.id} m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} onTap={openMenu} onRetry={() => retry(m.id)} />
         ))}
         {working && (
           <div className="flex items-center gap-2 pt-2 animate-rise">
@@ -427,12 +427,13 @@ function Avatar() {
   );
 }
 
-function ThinkLine({ think, initiallyOpen = false }: { think: Think; initiallyOpen?: boolean }) {
-  const [open, setOpen] = useState(initiallyOpen);
+function ThinkLine({ think, defaultOpen = false }: { think: Think; defaultOpen?: boolean }) {
+  const [expanded, setExpanded] = useState<boolean>();
+  const open = expanded ?? defaultOpen;
   return (
     <div className="mb-1.5 pl-10">
       <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]" data-onwp>
-        <button aria-expanded={open} onClick={() => setOpen((v) => !v)} className="flex min-h-9 items-center gap-1">
+        <button aria-expanded={open} onClick={() => setExpanded(!open)} className="flex min-h-9 items-center gap-1">
           <IconClock size={14} /> 思考过程 <IconChevron size={13} className={`transition ${open ? "" : "-rotate-90"}`} />
         </button>
         {think.tags.map((t, i) => (
@@ -449,10 +450,12 @@ function ThinkLine({ think, initiallyOpen = false }: { think: Think; initiallyOp
   );
 }
 
-function Bubble({ m, quiet, onTap, onRetry }: { m: Msg; quiet: boolean; onTap: (e: React.MouseEvent<HTMLDivElement>, m: Msg) => void; onRetry: () => void }) {
+function Bubble({ m, quiet, latest, onTap, onRetry }: { m: Msg; quiet: boolean; latest: boolean; onTap: (e: React.MouseEvent<HTMLDivElement>, m: Msg) => void; onRetry: () => void }) {
   const mine = m.role === "user";
-  const thoughts = !mine && m.reasoning ? <ThinkLine think={{ text: m.reasoning, tags: [] }} initiallyOpen={!quiet} />
-    : !mine && quiet && m.think ? <ThinkLine think={m.think} /> : null;
+  const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} />
+    : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} />
+    : !mine && latest && m.status === "done" && m.text
+      ? <p className="mb-1 pl-10 text-[12px]" data-onwp>这条回复没有收到模型提供的思考内容</p> : null;
   if (!m.text && !m.card && m.status !== "error") {
     return thoughts && (
       <div className="pt-2">

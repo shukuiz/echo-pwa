@@ -255,7 +255,15 @@ export function BeautyProvider({ children }: { children: React.ReactNode }) {
       const srgb = channel / 255;
       return sum + [0.2126, 0.7152, 0.0722][i] * (srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4);
     }, 0);
-    root.setProperty("--accent-ink", luminance > 0.179 ? "#171417" : "#fff");
+    const ink = luminance > 0.179 ? "#171417" : "#fff";
+    root.setProperty("--accent-ink", ink);
+    if (b.accent.toLowerCase() === DEFAULT_ACCENT) {
+      root.removeProperty("--desktop-accent");
+      root.removeProperty("--desktop-accent-ink");
+    } else {
+      root.setProperty("--desktop-accent", b.accent);
+      root.setProperty("--desktop-accent-ink", ink);
+    }
   }, [b.accent]);
   const bRef = useRef(b);
   bRef.current = b;

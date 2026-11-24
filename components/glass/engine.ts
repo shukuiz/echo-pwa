@@ -9,7 +9,7 @@ export const MAX = 16;       // 着色器一次最多 16 块
 export const GRID_CAP = 12;  // 桌面网格/页面内容最多 12 块，其余给 Dock/标题栏（最多 4 块），超出的走 CSS 玻璃
 
 export type Rect = { left: number; top: number; width: number; height: number };
-export type Entry = { el: HTMLElement; x: number; y: number; w: number; h: number; clip?: [number, number] | null; vis?: number; w0?: number };
+export type Entry = { el: HTMLElement; x: number; y: number; w: number; h: number; clip?: [number, number] | null; clipX?: [number, number]; vis?: number; w0?: number };
 export type HomeProvider = {
   entries: () => Entry[];             // 网格里的玻璃（位置来自缓存，滑动时不读布局）
   dragged?: () => Entry | null;        // 正在拖的那块（总是用 WebGL，画在最上面）
@@ -26,7 +26,7 @@ const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
 const FS = `
 precision highp float;
 uniform sampler2D uTex; uniform vec2 uRes; uniform vec2 uImg; uniform vec2 uScale; uniform float uTime;
-uniform vec4 uRect[${MAX}]; uniform vec4 uOpt[${MAX}]; uniform vec4 uClip[${MAX}]; uniform int uN;
+uniform vec4 uRect[${MAX}]; uniform vec4 uOpt[${MAX}]; uniform vec4 uClip[${MAX}]; uniform vec2 uPageClip; uniform int uN;
 uniform float uRefract, uTint, uBlur, uEdge, uShine, uWobble;
 uniform vec3 uTintCol, uMeCol;
 vec2 coverUV(vec2 px){
@@ -50,12 +50,13 @@ void main(){
     if (i >= uN) break;
     vec4 R = uRect[i]; vec4 O = uOpt[i];          // O: 圆角, 额外染色, 我方气泡, 只画边框
     vec4 C = uClip[i]; if (px.y < C.x || px.y > C.y) continue; // C: 竖向裁剪上/下, 底板不透明度, 深色字
+    if (O.w > 1.5 && (px.x < uPageClip.x || px.x > uPageClip.y)) continue;
     vec2 hb = R.zw*.5; vec2 c = R.xy + hb; vec2 lp = px - c;
     float r = min(O.x, min(hb.x,hb.y));
     float d = roundBox(lp, hb, r);
     if (d > 0.) { shadow = max(shadow, exp(-pow(d/7.,2.)) * .10 * smoothstep(-hb.y*.5, hb.y*.3, lp.y)); continue; }
     float inner = -d; float m = min(hb.x,hb.y);
-    if (O.w > .5 && inner > 6.5) { shadow = 0.; continue; } // 照片/动图：内容不折射，只留边框和光
+    if (mod(O.w, 2.) > .5 && inner > 6.5) { shadow = 0.; continue; } // 照片/动图：内容不折射，只留边框和光
     float t = clamp(inner / min(m, 36.), 0., 1.);
     float e = 1.5;
     vec2 g = vec2(roundBox(lp+vec2(e,0.),hb,r)-roundBox(lp-vec2(e,0.),hb,r), roundBox(lp+vec2(0.,e),hb,r)-roundBox(lp-vec2(0.,e),hb,r));
@@ -146,7 +147,7 @@ class GlassEngine {
         const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
         const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-        for (const n of ["uTex", "uRes", "uImg", "uScale", "uTime", "uRect", "uOpt", "uClip", "uN", "uRefract", "uTint", "uBlur", "uEdge", "uShine", "uWobble", "uTintCol", "uMeCol"]) this.U[n] = gl.getUniformLocation(prog, n);
+        for (const n of ["uTex", "uRes", "uImg", "uScale", "uTime", "uRect", "uOpt", "uClip", "uPageClip", "uN", "uRefract", "uTint", "uBlur", "uEdge", "uShine", "uWobble", "uTintCol", "uMeCol"]) this.U[n] = gl.getUniformLocation(prog, n);
         this.tex = gl.createTexture();
         this.gl = gl; this.prog = prog; this.noGL = false;
       } catch (e) {
@@ -377,12 +378,15 @@ class GlassEngine {
       const tint = (+(el.dataset.tint || 0)) * (isMe && b.bubMode === "glass" ? 0.3 : 1);
       clipF.set([c.clip ? c.clip[0] - oy : -1e4, c.clip ? c.clip[1] - oy : 1e4, +(el.dataset.wa ?? 1), el.dataset.ink === "d" ? 1 : 0], n * 4);
       rectF.set([c.x - ox, c.y - oy, c.w, c.h], n * 4);
-      optF.set([this.radOf(el) * (c.w / (c.w0 || c.w)), tint, isMe && b.bubMode === "tint" ? 1 : 0, el.hasAttribute("data-rim") ? 1 : 0], n * 4);
+      const flags = Number(el.hasAttribute("data-rim")) + (c.clipX ? 2 : 0);
+      optF.set([this.radOf(el) * (c.w / (c.w0 || c.w)), tint, isMe && b.bubMode === "tint" ? 1 : 0, flags], n * 4);
       n++;
     }
     const tint = hex2rgb(b.tint).map((v) => v / 255), me = hex2rgb(b.me).map((v) => v / 255);
     gl.viewport(0, 0, cv.width, cv.height);
     const U = this.U;
+    const pageClip = list.find((entry) => entry.clipX)?.clipX;
+    if (pageClip) gl.uniform2f(U.uPageClip, pageClip[0] - ox, pageClip[1] - ox);
     gl.uniform1i(U.uTex, 0); gl.uniform2f(U.uRes, cv.width, cv.height); gl.uniform2f(U.uImg, this.textureSize.width, this.textureSize.height);
     gl.uniform2f(U.uScale, this.scale[0], this.scale[1]); gl.uniform1f(U.uTime, b.motion ? (performance.now() - this.t0) / 1000 : 0);
     gl.uniform4fv(U.uRect, rectF); gl.uniform4fv(U.uOpt, optF); gl.uniform4fv(U.uClip, clipF); gl.uniform1i(U.uN, n);
