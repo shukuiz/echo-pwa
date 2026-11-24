@@ -44,7 +44,7 @@ vec3 tap(vec2 px, float bl){
 }
 void main(){
   vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uScale; // 画布 CSS 像素，原点 = 画布左上角
-  vec3 col = texture2D(uTex, coverUV(px)).rgb;
+  vec3 col = vec3(0.); bool glassPixel = false;
   float shadow = 0.;
   for (int i=0;i<${MAX};i++){
     if (i >= uN) break;
@@ -80,10 +80,10 @@ void main(){
     float edgeGlint = hairline * (upperLeft*.66 + lowerRight*.48) * uEdge * .04;
     gc = mix(gc, vec3(1.), clamp(edgeGlint, 0., .76));
     gc = mix(gc, vec3(1.), exp(-pow((d+.6)/.8,2.)) * .10);
-    col = gc; shadow = 0.;
+    col = gc; glassPixel = true; shadow = 0.;
   }
   col *= 1. - shadow;
-  gl_FragColor = vec4(col, 1.);
+  gl_FragColor = glassPixel ? vec4(col, 1.) : vec4(0., 0., 0., shadow);
 }`;
 
 class GlassEngine {
@@ -132,7 +132,7 @@ class GlassEngine {
     // iPad can report a desktop user agent even in an installed PWA.
     this.mobileBudget = /iPhone|iPad|iPod/.test(navigator.userAgent)
       || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: false, powerPreference: "low-power" }); } catch {}
+    try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: true, powerPreference: "low-power" }); } catch {}
     if (gl) {
       try {
         const sh = (type: number, src: string) => {
@@ -194,7 +194,7 @@ class GlassEngine {
     const r = (this.drawable() ? cv : pr).getBoundingClientRect();
     const w = r.width || document.documentElement.clientWidth || innerWidth, h = r.height || document.documentElement.clientHeight || innerHeight;
     const b = this.basis, changed = b.w !== w || b.h !== h || b.left !== r.left || b.top !== r.top;
-    const d = this.gl ? Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt((this.mobileBudget ? 200_000 : 900_000) / (w * h))) : 0;
+    const d = this.gl ? Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(900_000 / (w * h))) : 0;
     const bw = Math.max(1, Math.round(w * d)), bh = Math.max(1, Math.round(h * d));
     if (changed || cv.width !== bw || cv.height !== bh) {
       this.basis = { left: r.left, top: r.top, w, h };
