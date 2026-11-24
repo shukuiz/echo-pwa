@@ -8,6 +8,8 @@ import memoryRoute from "./src/routes/memory.js";
 import filesRoute from "./src/routes/files.js";
 import toolsRoute from "./src/routes/tools.js";
 import settingsRoute from "./src/routes/settings.js";
+import favoritesRoute from "./src/routes/favorites.js";
+import beautyRoute from "./src/routes/beauty.js";
 
 const app = Fastify({
   logger: false, // 不打印请求日志，避免泄露敏感信息
@@ -32,6 +34,8 @@ await app.register(memoryRoute);
 await app.register(filesRoute);
 await app.register(toolsRoute);
 await app.register(settingsRoute);
+await app.register(favoritesRoute);
+await app.register(beautyRoute);
 
 const PORT = Number(process.env.ECHO_PORT || 8787);
 const HOST = process.env.ECHO_HOST || "0.0.0.0";
