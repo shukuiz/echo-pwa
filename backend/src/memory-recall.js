@@ -1,3 +1,5 @@
+import { readMemoryModels } from "./memory-model-config.js";
+
 const EMBEDDING_BATCH_SIZE = 16;
 const MAX_CACHED_VECTORS = 1024;
 const MAX_CANDIDATES = 20;
@@ -9,18 +11,6 @@ export class MemoryRecallError extends Error {
     super(message);
     this.status = status;
     this.code = code;
-  }
-}
-
-function provider(env, prefix) {
-  try {
-    const url = new URL(env[`${prefix}_URL`]?.trim());
-    const model = env[`${prefix}_MODEL`]?.trim();
-    const localHttp = url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
-    if (!model || url.username || url.password || url.hash || (url.protocol !== "https:" && !localHttp)) return null;
-    return { url, model, key: env[`${prefix}_API_KEY`]?.trim() };
-  } catch {
-    return null;
   }
 }
 
@@ -69,6 +59,32 @@ async function embed(config, texts, signal) {
   return texts.map((_, index) => vectors.get(index));
 }
 
+async function rerank(config, query, documents, signal) {
+  const payload = await postModel(config, {
+    query,
+    documents,
+    top_n: documents.length,
+    return_documents: false,
+  }, signal);
+  return indexedResults(payload?.results, documents.length, ({ relevance_score: score }) => {
+    if (!Number.isFinite(score) || score < 0 || score > 1) throw new Error("Invalid relevance score");
+    return score;
+  });
+}
+
+export async function testMemoryModel(kind, config) {
+  if (!config) return { ok: false, message: "请先保存接口地址和模型名" };
+  const signal = AbortSignal.timeout(8_000);
+  const question = "这是一条连接测试。";
+  try {
+    if (kind === "embedding") await embed(config, [question], signal);
+    else await rerank(config, question, ["用于验证重排接口的示例。"], signal);
+    return { ok: true, message: "连接成功" };
+  } catch {
+    return { ok: false, message: signal.aborted ? "连接超时" : "连接失败，请核对接口地址、模型名和 API Key" };
+  }
+}
+
 function documentFor(item) {
   if (!item?.id || !["text", "summary"].includes(item.tab) || typeof item.text !== "string" || !item.text.trim()) return null;
   const title = typeof item.title === "string" ? item.title.trim().slice(0, 160) : "";
@@ -88,15 +104,21 @@ function stageError(signal, code, label) {
 }
 
 export function createMemoryRecall(load, env = process.env) {
-  const embedding = provider(env, "ECHO_EMBEDDING");
-  const reranker = provider(env, "ECHO_RERANK");
   const threshold = Number(env.ECHO_RERANK_MIN_SCORE?.trim() || 0.65);
-  const cache = new Map();
+  let cachedProfile;
+  let vectorCache;
 
   return async function recall(query, limit) {
+    const { embedding, rerank: reranker } = await readMemoryModels(env);
     if (!embedding || !reranker || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-      throw new MemoryRecallError(503, "memory_recall_unconfigured", "请在后端配置向量与重排模型");
+      throw new MemoryRecallError(503, "memory_recall_unconfigured", "请在「设置 → 记忆模型」配置向量和重排模型");
     }
+    const profile = JSON.stringify([embedding.url, embedding.model, embedding.key]);
+    if (cachedProfile !== profile) {
+      cachedProfile = profile;
+      vectorCache = new Map();
+    }
+    const cache = vectorCache;
     const source = await load();
     const documents = (source.memory || []).flatMap((item) => {
       const text = documentFor(item);
@@ -143,16 +165,7 @@ export function createMemoryRecall(load, env = process.env) {
     if (!shortlist.length) return [];
     let scores;
     try {
-      const payload = await postModel(reranker, {
-        query,
-        documents: shortlist.map(({ text }) => text),
-        top_n: shortlist.length,
-        return_documents: false,
-      }, signal);
-      scores = indexedResults(payload?.results, shortlist.length, ({ relevance_score: score }) => {
-        if (!Number.isFinite(score) || score < 0 || score > 1) throw new Error("Invalid relevance score");
-        return score;
-      });
+      scores = await rerank(reranker, query, shortlist.map(({ text }) => text), signal);
     } catch {
       throw stageError(signal, "memory_rerank_failed", "记忆重排");
     }
