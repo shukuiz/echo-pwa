@@ -1,0 +1,13 @@
+{
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_ECHO_AUTH": "1"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://t-4n78j7c2.go.altare.global/api/:path*"
+    }
+  ]
+}
