@@ -138,8 +138,14 @@ export default function HomeScreen() {
     first.current = false;
   }, [b.items, ready]);
   useEffect(() => { if (gridRef.current) gridRef.current.editing = editing; }, [editing]);
-  // 字体换了，字宽变了，等字体到位再排一次
-  useEffect(() => { const t = setTimeout(() => gridRef.current?.layout(true), 300); return () => clearTimeout(t); }, [b.font, b.theme]);
+  // 字体/主题换了，字宽和圆角会变：等这一帧的样式生效、字体到位后再排（不靠定时器猜时间）
+  useEffect(() => {
+    let alive = true;
+    const run = () => { if (alive) gridRef.current?.layout(true); };
+    const raf = requestAnimationFrame(run);
+    (document as Document & { fonts?: FontFaceSet }).fonts?.ready.then(run).catch(() => {});
+    return () => { alive = false; cancelAnimationFrame(raf); };
+  }, [b.font, b.songOrig, b.theme]);
 
   function pick(accept: string, multiple: boolean, cb: (fs: File[]) => void) {
     const f = fileRef.current; if (!f) return;

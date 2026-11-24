@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   title: "echo",
   description: "echo · 雾灰奶白的小助手",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "echo", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "echo", statusBarStyle: "black-translucent" },
   icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
 };
 
@@ -19,6 +19,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
   themeColor: "#e2e0df",
 };

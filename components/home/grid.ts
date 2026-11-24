@@ -16,13 +16,27 @@ export type GridCallbacks = {
   pageChange?: (n: number) => void;
 };
 
+// 吸附曲线：和原来 CSS 的 cubic-bezier(.22,.8,.26,1) 一样，但改成每帧由 JS 算——DOM 和玻璃在同一帧写同一个值，
+// 不再从 getComputedStyle 读 CSS 过渡的"当前值"（iOS 上合成线程跑得比主线程快，读到的是旧值 → 玻璃横向落后）
+function bezier(x1: number, y1: number, x2: number, y2: number) {
+  const f = (a: number, b: number, t: number) => ((1 - 3 * b + 3 * a) * t + (3 * b - 6 * a)) * t * t + 3 * a * t;
+  return (x: number) => {
+    if (x <= 0) return 0; if (x >= 1) return 1;
+    let lo = 0, hi = 1, t = x;
+    for (let i = 0; i < 24; i++) { const v = f(x1, x2, t); if (Math.abs(v - x) < 1e-5) break; if (v < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+    return f(y1, y2, t);
+  };
+}
+const SNAP_EASE = bezier(0.22, 0.8, 0.26, 1), SNAP_MS = 280;
+
 const RM = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 export class HomeGrid {
   items: HomeItem[] = [];
   editing = false;
   G = { W: 390, pad: 16, cg: 16, cw: 77.5, rp: 93.5, top: 6, rpp: 7, pages: 1, pos: {} as Record<string, Pos>, occ: [] as (string | null)[][], cells: [] as Cell[], px: 0, py: 48, animUntil: 0 };
-  PG = { cur: 0, x: 0, xNow: 0, want: 0 as number | null, anim: false, sw: null as null | { x0: number; base: number; pts: [number, number][] }, animT: 0 as unknown as ReturnType<typeof setTimeout> };
+  // xNow = 这一帧 .pages 实际的 translateX（玻璃就用它）；anim = JS 吸附动画
+  PG = { cur: 0, x: 0, xNow: 0, want: 0 as number | null, anim: null as null | { from: number; to: number; t0: number }, sw: null as null | { x0: number; base: number; pts: [number, number][] } };
   press: Press | null = null;
   drag: Drag | null = null;
   private off: (() => void)[] = [];
@@ -41,13 +55,28 @@ export class HomeGrid {
     // 拖动/翻页时阻止 iOS 自己滚动或回弹（touch-action 在手势中途改不了，靠这里兜底）
     on(document, "touchmove", (e: TouchEvent) => { if (this.drag || this.PG.sw || (this.press && !this.press.empty && (this.press.long || this.editing))) e.preventDefault(); }, { passive: false });
     on(document, "contextmenu", (e: MouseEvent) => { if ((e.target as Element)?.closest?.(".pager")) e.preventDefault(); });
-    on(pages, "transitionend", (e: TransitionEvent) => { if (e.target === pages && this.PG.anim) this.endSnap(); });
     on(window, "resize", () => this.layout(true));
+    on(window, "orientationchange", () => this.layout(true));
+    if (window.visualViewport) on(window.visualViewport, "resize", () => this.layout(true));
+    on(window, "pageshow", () => this.layout(true));
+    // 容器尺寸变了（iOS 主屏启动后视口高度会变、安全区到位）→ 重排；只在尺寸真的变时才排
+    if (typeof ResizeObserver !== "undefined") {
+      let w0 = -1, h0 = -1;
+      const ro = new ResizeObserver(() => { const w = pager.clientWidth, h = pager.clientHeight; if (w !== w0 || h !== h0) { w0 = w; h0 = h; this.layout(true); } });
+      ro.observe(pager); this.off.push(() => ro.disconnect());
+    }
+    // 字体到了字宽会变：等 fonts.ready / 每次字体加载完再排一次（代替原来的 300ms 定时器）
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (fonts) {
+      let alive = true; this.off.push(() => { alive = false; });
+      fonts.ready.then(() => { if (alive) this.layout(true); }).catch(() => {});
+      on(fonts, "loadingdone", () => this.layout(true));
+    }
     this.off.push(engine.addTicker(this.tick));
-    engine.setHome({ entries: this.entries, dragged: this.dragged, restRect: this.restRect });
+    engine.setHome({ entries: this.entries, dragged: this.dragged, restRect: this.restRect, sync: this.sync });
     this.off.push(() => engine.setHome(null));
   }
-  detach() { this.off.forEach((f) => f()); this.off = []; clearTimeout(this.PG.animT); if (this.press?.t) clearTimeout(this.press.t); }
+  detach() { this.off.forEach((f) => f()); this.off = []; this.PG.anim = null; if (this.press?.t) clearTimeout(this.press.t); }
 
   private el(id: string) { return this.pages.querySelector<HTMLElement>(`.it[data-id="${CSS.escape(id)}"]`); }
 
@@ -82,6 +111,14 @@ export class HomeGrid {
     G.rpp = Math.max(4, Math.floor((H - G.top - 86) / G.rp) + 1);
     const pr = this.pager.getBoundingClientRect(); G.px = pr.left; G.py = pr.top;
   }
+  /** 引擎重读位置前调用：重量网格原点（430 居中容器的左偏移、状态栏高度都在这里），尺寸变了就整页重排 */
+  sync = () => {
+    const G = this.G, pr = this.pager.getBoundingClientRect();
+    if (Math.abs(pr.width - G.W) > 0.5 || this.pager.clientHeight !== this.lastH) { this.layout(true); return; }
+    G.px = pr.left; G.py = pr.top;
+    if (!this.drag) this.cacheCells();
+  };
+  private lastH = -1;
   itemBox(id: string) {
     const G = this.G, q = G.pos[id]; if (!q) return null;
     const x = q.p * G.W + G.pad + q.c * (G.cw + G.cg), y = G.top + q.r * G.rp;
@@ -91,7 +128,7 @@ export class HomeGrid {
   }
   layout(noAnim = false) {
     const G = this.G, PG = this.PG;
-    this.measure();
+    this.measure(); this.lastH = this.pager.clientHeight;
     const res = this.pack(this.items); G.pos = res.pos; G.occ = res.occ; G.pages = res.pages;
     this.pages.style.width = G.pages * G.W + "px";
     for (const el of Array.from(this.pages.querySelectorAll<HTMLElement>(".it"))) {
@@ -104,6 +141,7 @@ export class HomeGrid {
     }
     if (PG.cur > G.pages - 1) this.goPage(G.pages - 1, true);
     else if (!PG.sw && !PG.anim) PG.want = -PG.cur * G.W;
+    else if (PG.anim) PG.anim.to = -PG.cur * G.W; // 吸附途中宽度变了：终点跟着变
     if (!noAnim) G.animUntil = performance.now() + 380;
     this.cacheCells(); this.drawDots();
     engine.invalidate(); if (!noAnim) setTimeout(() => engine.invalidate(), 400); // 重排动画结束后按新位置再算一次字色
@@ -126,15 +164,15 @@ export class HomeGrid {
 
   // ---------- 给玻璃引擎的数据 ----------
   entries = (): Entry[] => {
-    const G = this.G, PG = this.PG, out: Entry[] = [], live = performance.now() < G.animUntil, vw = innerWidth, vh = innerHeight;
+    const G = this.G, PG = this.PG, out: Entry[] = [], live = performance.now() < G.animUntil, B = engine.basis, vw = B.left + (B.w || innerWidth), vh = B.top + (B.h || innerHeight);
     for (const c of G.cells) {
       if (this.drag && c.el === this.drag.el) continue;
       let x: number, y: number;
       const w = c.w, h = c.h;
       if (live) { const r = c.g.getBoundingClientRect(); x = r.left + (r.width - w) / 2; y = r.top + (r.height - h) / 2; } // 重排动画那 0.35 秒里读真实位置（这时没有在滑动）
       else { x = G.px + PG.xNow + c.bx + c.ox; y = G.py + c.by + c.oy; }
-      const vis = Math.min(x + w, vw) - Math.max(x, 0);
-      if (vis <= 0 || y > vh || y + h < 0) { c.g.removeAttribute("data-cssg"); continue; }
+      const vis = Math.min(x + w, vw) - Math.max(x, B.left);
+      if (vis <= 0 || y > vh || y + h < B.top) { c.g.removeAttribute("data-cssg"); continue; }
       out.push({ el: c.g, x, y, w, h, clip: null, vis: vis * h });
     }
     return out;
@@ -158,42 +196,40 @@ export class HomeGrid {
   // ---------- 一帧：推翻页位移、钉住拖动的小组件 ----------
   tick = () => {
     const PG = this.PG; let moved = false;
-    if (PG.want !== null) {
-      this.pages.style.transform = `translate3d(${PG.want}px,0,0)`; PG.x = PG.want; PG.want = null; moved = true;
-      if (!PG.anim) PG.xNow = PG.x;
-    }
-    if (PG.anim) { // 只读一次当前位移（一个 getComputedStyle，不读任何元素布局）
-      const m = getComputedStyle(this.pages).transform, v = /matrix(3d)?\((.+)\)/.exec(m);
-      if (v) { const a = v[2].split(","); PG.xNow = parseFloat(a[v[1] ? 12 : 4]); }
+    if (PG.anim) { // 吸附：这一帧的位置由曲线算出来，同时写给 DOM 和玻璃
+      const a = PG.anim, k = Math.min(1, (performance.now() - a.t0) / SNAP_MS);
+      PG.want = a.from + (a.to - a.from) * SNAP_EASE(k);
+      if (k >= 1) { PG.want = a.to; PG.anim = null; }
       moved = true;
+      if (!PG.anim) { this.setX(PG.want); PG.want = null; this.endSnap(); return true; }
     }
+    if (PG.want !== null) { this.setX(PG.want); PG.want = null; moved = true; }
     if (this.drag) { this.dragTick(); moved = true; }
     if (performance.now() < this.G.animUntil) moved = true;
     return moved;
   };
+
+  private setX(x: number) { this.pages.style.transform = `translate3d(${x}px,0,0)`; this.PG.x = x; this.PG.xNow = x; }
 
   goPage(n: number, instant = false) {
     const G = this.G, PG = this.PG;
     n = Math.max(0, Math.min(G.pages - 1, n));
     const changed = n !== PG.cur; PG.cur = n; this.drawDots();
     if (changed) this.cb.pageChange?.(n);
-    clearTimeout(PG.animT);
-    if (instant || RM()) { this.pages.classList.remove("snapping"); PG.anim = false; PG.want = -n * G.W; return changed; }
-    this.pages.classList.add("snapping"); PG.anim = true; PG.want = -n * G.W;
-    PG.animT = setTimeout(() => this.endSnap(), 320);
+    if (instant || RM()) { PG.anim = null; PG.want = -n * G.W; engine.invalidate(); return changed; }
+    PG.anim = { from: PG.xNow, to: -n * G.W, t0: performance.now() }; PG.want = null;
+    engine.invalidate(); // 叫醒引擎的 rAF，动画由 tick 推
     return changed;
   }
   endSnap() {
-    const PG = this.PG; clearTimeout(PG.animT); PG.anim = false; this.pages.classList.remove("snapping"); PG.xNow = PG.x;
+    this.PG.anim = null;
+    engine.invalidate(); // 停下来的这一帧一定重画（关了水波动画时以前会停在过渡途中的旧位置）
     if (this.drag?.onSettle) this.drag.onSettle();
   }
   private rubber = (d: number) => (1 - 1 / ((d * 0.55) / this.G.W + 1)) * this.G.W; // 边缘阻尼，越拉越沉
   swStart(e: PointerEvent, x0?: number) {
     const PG = this.PG;
-    if (PG.anim) { // 吸附中又按住：从当前位置接着拖
-      clearTimeout(PG.animT); PG.anim = false; this.pages.classList.remove("snapping");
-      this.pages.style.transform = `translate3d(${PG.xNow}px,0,0)`; PG.x = PG.xNow;
-    }
+    if (PG.anim) { PG.anim = null; this.setX(PG.xNow); } // 吸附中又按住：从当前位置接着拖
     PG.sw = { x0: x0 ?? e.clientX, base: PG.x, pts: [[e.timeStamp, e.clientX]] };
     try { this.pager.setPointerCapture(e.pointerId); } catch {}
   }
