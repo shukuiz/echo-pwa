@@ -1,5 +1,6 @@
 // 记忆读写：结构化记忆(persona/text/summary) + 提醒，存后端 memory/store.json，实时持久化
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
+import { createMemoryRecall, MemoryRecallError } from "../memory-recall.js";
 
 async function load() {
   return await readJSON(paths.store(DATA_DIR), { memory: [], reminders: [] });
@@ -9,6 +10,23 @@ async function save(store) {
 }
 
 export default async function memoryRoute(app) {
+  const recall = createMemoryRecall(load);
+
+  app.post("/api/memory/recall", { bodyLimit: 8192 }, async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const { query, limit = 2 } = req.body || {};
+    const text = typeof query === "string" ? query.trim() : "";
+    if (!text || text.length > 1000 || !Number.isInteger(limit) || limit < 1 || limit > 20) {
+      return reply.code(400).send({ error: "bad_input", message: "query 需要 1–1000 个字符，limit 需要是 1–20 的整数" });
+    }
+    try {
+      return { results: await recall(text, limit) };
+    } catch (error) {
+      if (!(error instanceof MemoryRecallError)) throw error;
+      return reply.code(error.status).send({ error: error.code, message: error.message });
+    }
+  });
+
   // 读全部记忆 + 提醒
   app.get("/api/memory", async () => {
     const store = await load();
