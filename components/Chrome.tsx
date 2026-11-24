@@ -21,7 +21,7 @@ export function StatusBar() {
   }, []);
   if (settings.showStatusBar === false) return null;
   return (
-    <div className="flex h-11 items-center justify-between px-6 pt-[env(safe-area-inset-top)] text-[15px] font-semibold text-ink" aria-hidden>
+    <div className="fake-sb flex h-11 items-center justify-between px-6 text-[15px] font-semibold text-ink" aria-hidden>
       <span className="tabular-nums">{time}</span>
       <div className="flex items-center gap-1.5">
         {/* 信号 */}
@@ -79,7 +79,8 @@ export function PageShell({
   if (glass) return <GlassShell title={title} sub={sub} right={right} footer={footer} onBack={back}>{children}</GlassShell>;
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-fog">
-      <div className="sticky top-0 z-30 bg-fog/85 backdrop-blur-xl">
+      {/* 刘海 / 灵动岛：主屏幕 App 用 black-translucent 状态栏，内容会顶到最上面，所以标题栏自己让出安全区 */}
+      <div className="sticky top-0 z-30 bg-fog/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
         <StatusBar />
         <div className="flex h-12 items-center gap-3 px-4">
           <button
@@ -145,7 +146,7 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
     <WallScreen gl={false} fixed className="chat-shell mx-auto flex w-full max-w-[430px] flex-col">
       <div className="gstick relative z-30 shrink-0 pt-[env(safe-area-inset-top)]">
         {settings.showStatusBar !== false && (
-          <div className="flex h-11 items-center justify-between px-7 text-[15px] font-semibold" data-onwp aria-hidden>
+          <div className="fake-sb flex h-11 items-center justify-between px-7 text-[15px] font-semibold" data-onwp aria-hidden>
             <span className="tabular-nums">{time}</span>
             <span className="flex items-center gap-1.5 text-[12px]">5G <span className="bat" /></span>
           </div>
