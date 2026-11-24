@@ -1,8 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./beauty.css";
 import { StoreProvider } from "@/lib/store";
 import PWARegister from "@/components/PWARegister";
 import AuthGate from "@/components/AuthGate";
+import { BeautyProvider } from "@/lib/beauty";
+import GlassMount from "@/components/glass/GlassMount";
 
 export const metadata: Metadata = {
   title: "echo",
@@ -27,12 +30,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* 首屏前读取主题，避免闪烁 */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var s=JSON.parse(localStorage.getItem('echo-pwa-state-v3')||'{}');if(s.theme==='dark')document.documentElement.classList.add('dark')}catch(e){}`,
+            __html: `try{var s=JSON.parse(localStorage.getItem('echo-pwa-state-v3')||'{}');if(s.theme==='dark')document.documentElement.classList.add('dark')}catch(e){}try{var b=JSON.parse(localStorage.getItem('echo-beauty-v1')||'{}'),c=document.documentElement.classList;c.add(b.theme==='real'?'th-real':'th-glass');if(b.font==='song')c.add(b.songOrig?'f-ipa':'f-song')}catch(e){}`,
           }}
         />
       </head>
       <body>
-        <AuthGate><StoreProvider>{children}</StoreProvider></AuthGate>
+        <BeautyProvider>
+          <GlassMount />
+          <AuthGate><StoreProvider>{children}</StoreProvider></AuthGate>
+        </BeautyProvider>
         <PWARegister />
       </body>
     </html>
