@@ -5,15 +5,18 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/Chrome";
 import {
-  IconCode, IconCopy, IconHand, IconMusic, IconRetry, IconSend, IconStar, IconStop, IconTrash, IconWand,
+  IconCode, IconHand, IconMusic, IconRetry, IconSend, IconStar, IconStop, IconWand,
   IconClip, IconMic, IconChevron, IconClock, IconSpark, IconTool, IconImage, IconCheck,
 } from "@/components/Icons";
 import { Card, Msg, uid, useStore } from "@/lib/store";
 import { fileKindLabel, Think } from "@/lib/mock";
-import { api } from "@/lib/api";
+import { api, ApiError, ECHO_AUTH_ENABLED } from "@/lib/api";
+import { addFavorite } from "@/lib/favorites";
+import { createMemory } from "@/lib/memory";
+import { GIcon } from "@/components/glass/Wall";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
-type Menu = { id: string; top: number; left: number; right: number; mine: boolean; rect: { top: number; left: number; width: number; height: number }; html: string; cls: string };
+type Menu = { id: string; mine: boolean; rect: { top: number; left: number; width: number; height: number }; text: string; cls: string };
 type Work = {
   hand: string;
   branch: string;
@@ -49,6 +52,10 @@ function Chat() {
   const [working, setWorking] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
+  // 多选：sel 不为 null 就是多选模式；anchor = 最后点的那句，「从这句以后 / 以前」以它为准
+  const [sel, setSel] = useState<string[] | null>(null);
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const [askDel, setAskDel] = useState<string[] | null>(null);
   const [modelMenu, setModelMenu] = useState(false);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -123,7 +130,7 @@ function Chat() {
   const patch = (id: string, p: Partial<Msg>) => set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, ...p } : m)));
 
   /** 把最近 20 条消息发给后端，流式逐字回显 */
-  async function doChat(history: Msg[], errId?: string) {
+  async function doChat(history: Msg[], errId?: string, regenerate = false) {
     const echoId = errId ?? uid();
     if (errId) {
       patch(errId, { text: "", reasoning: undefined, status: "streaming", errorMessage: undefined, at: Date.now() });
@@ -136,12 +143,15 @@ function Chat() {
     const ac = new AbortController();
     abortRef.current = ac;
     const input = history.filter((m) => m.text).slice(-20).map((m) => ({ role: m.role, text: m.text }));
+    const userId = [...history].reverse().find((m) => m.role === "user")?.id;
     let first = true;
 
     try {
       await api.chatStream(input, {
         model: settings.model,
         signal: ac.signal,
+        ids: { user: userId, echo: echoId },
+        regenerate,
         onReasoning: (text) => {
           if (first) { setWorking(null); first = false; }
           set("messages", (ms) => ms.map((m) => m.id === echoId ? { ...m, reasoning: (m.reasoning || "") + text } : m));
@@ -202,24 +212,158 @@ function Chat() {
     ok ? c.onOk() : c.onNo();
   }
 
-  function openMenu(e: React.MouseEvent<HTMLDivElement>, m: Msg) {
-    if (m.status === "streaming" || m.status === "error") return;
-    const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ id: m.id, top: r.bottom + 8, left: r.left, right: window.innerWidth - r.right, mine: m.role === "user", rect: { top: r.top, left: r.left, width: r.width, height: r.height }, html: m.text, cls: e.currentTarget.className });
+  /** 长按（或桌面右键）气泡：弹出玻璃菜单 */
+  function openMenu(el: HTMLElement, m: Msg) {
+    if (m.status === "streaming" || sel) return;
+    const r = el.getBoundingClientRect();
+    setMenu({ id: m.id, mine: m.role === "user", rect: { top: r.top, left: r.left, width: r.width, height: r.height }, text: m.text, cls: el.className });
+  }
+
+  const byIds = (ids: string[]) => messagesRef.current.filter((m) => ids.includes(m.id));
+  const lastUserIdx = (ms: Msg[]) => { for (let i = ms.length - 1; i >= 0; i--) if (ms[i].role === "user") return i; return -1; };
+  /** 只有最新一轮（最后一条用户消息和它之后 echo 的回复）可以重新生成 */
+  function canRegenerate(id: string) {
+    const ms = messages, u = lastUserIdx(ms), i = ms.findIndex((m) => m.id === id);
+    return !busy && u >= 0 && i >= u;
   }
 
   async function copyMsg(id: string) {
     const m = messages.find((x) => x.id === id);
-    try { await navigator.clipboard.writeText(m?.text ?? ""); toast("已复制"); } catch { toast("复制失败，请长按文字手动复制"); }
+    try { await navigator.clipboard.writeText(m?.text ?? ""); toast("已复制"); } catch { toast("复制失败了 (；´д｀)"); }
     setMenu(null);
-  }
-  function deleteMsg(id: string) {
-    set("messages", (ms) => ms.filter((m) => m.id !== id));
-    setMenu(null);
-    toast("已删除");
   }
 
+  /** 删除（单条或多选）：先删后端 chat.json，成功再删本地；没开登录且连不上后端时只删本机 */
+  async function removeMessages(ids: string[]) {
+    setAskDel(null);
+    try {
+      await api.deleteMessages(ids);
+    } catch (e) {
+      if (ECHO_AUTH_ENABLED || !(e instanceof ApiError && e.status === 0)) { toast((e as Error).message || "删除失败"); return; }
+    }
+    set("messages", (ms) => ms.filter((m) => !ids.includes(m.id)));
+    setSel(null); setAnchor(null);
+    toast(ids.length > 1 ? `已删除 ${ids.length} 条` : "已删除");
+  }
+
+  /** 记住：存成记忆本里的一条「场景」 */
+  async function remember(ids: string[]) {
+    setMenu(null);
+    const picked = byIds(ids).filter((m) => m.text.trim());
+    if (!picked.length) return;
+    const text = picked.length === 1 ? picked[0].text.trim() : picked.map((m) => `${m.role === "user" ? "我" : "echo"}：${m.text.trim()}`).join("\n");
+    try {
+      const { item, mode } = await createMemory({
+        kind: "scene", title: picked[0].text.replace(/\s+/g, " ").trim().slice(0, 14), text,
+        source: { type: "chat", messageIds: picked.map((m) => m.id) },
+      });
+      set("memory", (ms) => [item, ...ms]);
+      toast(mode === "local" ? "记住啦（先存在本机）" : "记住啦，在记忆本里 ✓");
+      setSel(null); setAnchor(null);
+    } catch (e) {
+      toast((e as Error).message || "没记住，再试一次？");
+    }
+  }
+
+  /** 收藏：单条或多选都存成收藏本里的一个条目 */
+  async function favorite(ids: string[]) {
+    setMenu(null);
+    const picked = byIds(ids).filter((m) => m.text.trim());
+    if (!picked.length) return;
+    try {
+      const { source } = await addFavorite(picked.map((m) => ({ id: m.id, role: m.role, text: m.text, at: m.at })));
+      toast(source === "local" ? "收藏好啦（先存在本机）" : "收藏好啦 ♡");
+      setSel(null); setAnchor(null);
+    } catch (e) {
+      toast((e as Error).message || "收藏失败了");
+    }
+  }
+
+  /** 重新生成本轮：删掉最后一条用户消息之后 echo 的回复，用同一句再请求一次 */
+  async function regenerate() {
+    setMenu(null);
+    if (busy) return;
+    const ms = messagesRef.current, u = lastUserIdx(ms);
+    if (u < 0) return;
+    const old = ms.slice(u + 1).map((m) => m.id);
+    if (old.length) {
+      try { await api.deleteMessages(old); } catch (e) {
+        if (ECHO_AUTH_ENABLED || !(e instanceof ApiError && e.status === 0)) { toast((e as Error).message || "旧回复没删掉，先不重新生成"); return; }
+      }
+      set("messages", (list) => list.filter((m) => !old.includes(m.id)));
+    }
+    followLatest.current = true;
+    doChat(ms.slice(0, u + 1), undefined, true);
+  }
+
+  // ---------- 多选 ----------
+  const selectable = (m: Msg) => m.status !== "streaming";
+  function startSelect(id: string, range?: "after" | "before") {
+    setMenu(null);
+    setSel(range ? rangeIds(id, range) : [id]);
+    setAnchor(id);
+  }
+  function rangeIds(id: string, dir: "after" | "before") {
+    const i = messages.findIndex((m) => m.id === id);
+    const part = dir === "after" ? messages.slice(Math.max(0, i)) : messages.slice(0, i + 1);
+    return part.filter(selectable).map((m) => m.id);
+  }
+  function toggle(id: string) {
+    setAnchor(id);
+    setSel((cur) => (cur ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id]));
+  }
+  /** 从这句以后 / 以前：把这一段全部勾上（已经全勾上了就全部取消） */
+  function selectRange(dir: "after" | "before") {
+    if (!anchor) return;
+    const ids = rangeIds(anchor, dir);
+    setSel((cur) => {
+      const now = cur ?? [];
+      const all = ids.every((x) => now.includes(x));
+      return all ? now.filter((x) => !ids.includes(x)) : Array.from(new Set([...now, ...ids]));
+    });
+  }
+  const allIds = messages.filter(selectable).map((m) => m.id);
+  const allOn = !!sel && allIds.length > 0 && allIds.every((x) => sel.includes(x));
+  /** 按聊天顺序排好的已选 id */
+  const picked = sel ? messages.filter((m) => sel.includes(m.id)).map((m) => m.id) : [];
+
+  // 从收藏本跳回来：/chat?focus=消息id
+  useEffect(() => {
+    const id = params.get("focus");
+    if (!id) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById("msg-" + id);
+      if (!el) { toast("这条聊天记录已经不在了"); return; }
+      followLatest.current = false;
+      el.scrollIntoView({ block: "center" });
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 1600);
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
   const quiet = settings.quietThink;
+  const selectBar = sel && (
+    <div className="relative z-30 shrink-0 px-3">
+      <div className="g cbar selbar" data-cssg data-tint="0.08" style={{ "--r": "26px" } as React.CSSProperties}>
+        <div className="selhead">
+          <b>已选 {picked.length} 条</b>
+          <button className="chip selchip selall" onClick={() => setSel(allOn ? [] : allIds)}>{allOn ? "全不选" : "全选"}</button>
+          <button className="selx" aria-label="退出多选" onClick={() => { setSel(null); setAnchor(null); }}><GIcon n="x" s={18} w={2.2} /></button>
+          <div className="selrange">
+            <button className="chip selchip" disabled={!anchor} onClick={() => selectRange("before")} aria-label="从这句以前全部勾选"><GIcon n="up" s={14} w={2.2} />从这句以前</button>
+            <button className="chip selchip" disabled={!anchor} onClick={() => selectRange("after")} aria-label="从这句以后全部勾选">从这句以后<GIcon n="down" s={14} w={2.2} /></button>
+          </div>
+        </div>
+        <div className="selacts">
+          <button disabled={!picked.length} onClick={() => setAskDel(picked)} className="danger"><GIcon n="trash" s={20} />删除</button>
+          <button disabled={!picked.length} onClick={() => favorite(picked)}><GIcon n="heart" s={20} />收藏</button>
+          <button disabled={!picked.length} onClick={() => remember(picked)}><GIcon n="brain" s={20} />记住</button>
+        </div>
+      </div>
+    </div>
+  );
   const composer = (
       <div className="relative z-30 shrink-0 px-3">
       {/* 模型选择 */}
@@ -291,7 +435,7 @@ function Chat() {
     <PageShell
       glass
       title="echo"
-      footer={composer}
+      footer={selectBar || composer}
       sub={
         <button
           onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}
@@ -340,7 +484,15 @@ function Chat() {
           <p className="pt-20 text-center" data-onwp>和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
         )}
         {messages.map((m) => (
-          <Bubble key={m.id} m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} onTap={openMenu} onRetry={() => retry(m.id)} />
+          <div key={m.id} id={"msg-" + m.id} className={`msgrow ${sel ? "selecting" : ""} ${sel?.includes(m.id) ? "picked" : ""}`}
+            onClick={sel && selectable(m) ? () => toggle(m.id) : undefined}>
+            {sel && selectable(m) && (
+              <span className="selbox" role="checkbox" aria-checked={sel.includes(m.id)} aria-label={sel.includes(m.id) ? "取消勾选" : "勾选这条"}>
+                <GIcon n="check" s={14} w={3} />
+              </span>
+            )}
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} onMenu={openMenu} onRetry={() => retry(m.id)} />
+          </div>
         ))}
         {working && (
           <div className="flex items-center gap-2 pt-2 animate-rise">
@@ -395,25 +547,50 @@ function Chat() {
         </div>
       )}
 
-      {menu && (
-        <div className="fixed inset-0 z-50" onClick={() => setMenu(null)}>
-          <div className="absolute inset-0 bg-fog/40 backdrop-blur-sm" />
-          <div
-            className={menu.cls + " pointer-events-none absolute animate-pop shadow-soft"}
-            style={{ top: Math.min(menu.rect.top, window.innerHeight - 140 - menu.rect.height - 8), left: menu.rect.left, width: menu.rect.width }}
-          >
-            {menu.html}
+      {menu && (() => {
+        const H = 172, vh = window.innerHeight, vw = Math.min(window.innerWidth, 430);
+        const regen = canRegenerate(menu.id);
+        const bubbleTop = Math.max(70, Math.min(menu.rect.top, vh - H - menu.rect.height - 24));
+        const below = bubbleTop + menu.rect.height + 10;
+        const menuW = 292, left = Math.max(10, Math.min(menu.mine ? menu.rect.left + menu.rect.width - menuW : menu.rect.left, vw - menuW - 10));
+        const acts: [string, string, () => void, string?][] = [
+          ["copy", "复制", () => copyMsg(menu.id)],
+          ["brain", "记住", () => remember([menu.id])],
+          ["heart", "收藏", () => favorite([menu.id])],
+          ["select", "多选", () => startSelect(menu.id)],
+          ["down", "从这句以后", () => startSelect(menu.id, "after")],
+          ...(regen ? [["retry", "重新生成本轮", regenerate] as [string, string, () => void]] : []),
+          ["trash", "删除", () => { setMenu(null); setAskDel([menu.id]); }, "danger"],
+        ];
+        return (
+          <div className="msgmenu fixed inset-0 z-50" onClick={() => setMenu(null)} onContextMenu={(e) => e.preventDefault()}>
+            <div className="absolute inset-0 bg-[rgba(16,24,38,.22)] backdrop-blur-[3px]" />
+            <div className={menu.cls + " pointer-events-none absolute animate-pop whitespace-pre-wrap break-words"}
+              style={{ top: bubbleTop, left: menu.rect.left, width: menu.rect.width, maxHeight: vh * 0.45, overflow: "hidden" }}>
+              {menu.text}
+            </div>
+            <div className="gmenu animate-pop" role="menu" aria-label="消息操作" style={{ top: Math.min(below, vh - H - 12), left, width: menuW }} onClick={(e) => e.stopPropagation()}>
+              {acts.map(([icon, label, fn, cls]) => (
+                <button key={label} role="menuitem" className={cls} onClick={fn}><GIcon n={icon} s={21} />{label}</button>
+              ))}
+            </div>
           </div>
-          <div
-            className="absolute w-[220px] animate-pop overflow-hidden rounded-[22px] bg-tile/95 shadow-soft"
-            style={{ top: Math.min(menu.top, window.innerHeight - 140), ...(menu.mine ? { right: Math.max(menu.right, 12) } : { left: Math.max(menu.left, 12) }) }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button onClick={() => copyMsg(menu.id)} className="flex w-full items-center justify-between px-5 py-3.5 text-[16px] active:bg-fog">复制 <IconCopy size={20} /></button>
-            <div className="h-px bg-line" />
-            <button onClick={() => deleteMsg(menu.id)} className="flex w-full items-center justify-between px-5 py-3.5 text-[16px] text-rose active:bg-fog">删除 <IconTrash size={20} /></button>
+        );
+      })()}
+
+      {askDel && (
+        <>
+          <div className="gmask" onClick={() => setAskDel(null)} />
+          <div className="gsheet on" role="alertdialog" aria-label="确认删除">
+            <div className="grab" />
+            <div className="sh-h"><b>删除 {askDel.length} 条消息？</b></div>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>聊天记录里也会删掉，删了就找不回来了（收藏和记住过的不受影响）</p>
+            <div className="addl">
+              <button className="gbtn red" onClick={() => removeMessages(askDel)}>删除</button>
+              <button className="gbtn" onClick={() => setAskDel(null)}>取消</button>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </PageShell>
   );
@@ -450,8 +627,45 @@ function ThinkLine({ think, defaultOpen = false }: { think: Think; defaultOpen?:
   );
 }
 
-function Bubble({ m, quiet, latest, onTap, onRetry }: { m: Msg; quiet: boolean; latest: boolean; onTap: (e: React.MouseEvent<HTMLDivElement>, m: Msg) => void; onRetry: () => void }) {
+/** 长按 500ms 或右键：触发 cb；手指一动（滚动）就取消；长按触发后吞掉随后的那次点击 */
+function useLongPress(cb: (el: HTMLElement) => void, disabled: boolean, ms = 500) {
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const fired = useRef(false);
+  const clear = () => { clearTimeout(timer.current); start.current = null; };
+  useEffect(() => clear, []);
+  if (disabled) return {};
+  return {
+    onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      fired.current = false;
+      start.current = { x: e.clientX, y: e.clientY };
+      const el = e.currentTarget;
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => { fired.current = true; start.current = null; navigator.vibrate?.(8); cb(el); }, ms);
+    },
+    onPointerMove: (e: React.PointerEvent<HTMLElement>) => {
+      const s0 = start.current;
+      if (s0 && Math.hypot(e.clientX - s0.x, e.clientY - s0.y) > 8) clear();
+    },
+    onPointerUp: clear,
+    onPointerCancel: clear,
+    onPointerLeave: clear,
+    onContextMenu: (e: React.MouseEvent<HTMLElement>) => {
+      e.preventDefault();
+      clear();
+      if (!fired.current) cb(e.currentTarget);
+      fired.current = false;
+    },
+    onClickCapture: (e: React.MouseEvent<HTMLElement>) => {
+      if (fired.current) { e.stopPropagation(); e.preventDefault(); fired.current = false; }
+    },
+  };
+}
+
+function Bubble({ m, quiet, latest, selecting, onMenu, onRetry }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onRetry: () => void }) {
   const mine = m.role === "user";
+  const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} />
     : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} />
     : !mine && latest && m.status === "done" && m.text
@@ -486,11 +700,11 @@ function Bubble({ m, quiet, latest, onTap, onRetry }: { m: Msg; quiet: boolean; 
       {!mine && <Avatar />}
       <div className={`max-w-[80%] ${m.card && m.status === "done" ? "w-[80%]" : ""}`}>
         <div
-          onClick={(e) => onTap(e, m)}
+          {...press}
           data-cssg
           data-hue={mine ? "me" : undefined}
           data-tint={mine ? "0.22" : undefined}
-          className={`g bub inline-block cursor-pointer whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition active:scale-[0.98] ${
+          className={`g bub inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
             mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
           }`}
         >

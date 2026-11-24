@@ -9,15 +9,29 @@ export type MemoryModelKind = "embedding" | "rerank";
 export type MemoryModelSettings = { url: string; model: string; hasKey: boolean };
 type MemoryModelConfig = Record<MemoryModelKind, MemoryModelSettings>;
 
+/** 带 HTTP 状态码的错误：记忆本要区分 503（还没配置）和别的失败；status 0 = 根本没连上后端 */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function jsonFetch<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers = new Headers(opts.headers);
   if (opts.body != null && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") throw e;
+    throw new ApiError("连不上 echo 后端", 0, "offline");
+  }
   if (!res.ok) throw await requestError(res);
   return res.json();
 }
@@ -27,10 +41,33 @@ async function requestError(res: Response) {
   if (ECHO_AUTH_ENABLED && res.status === 401 && data?.error === "echo_login_required") {
     window.dispatchEvent(new Event(ECHO_AUTH_REQUIRED_EVENT));
   }
-  if (data?.error === "no_key") return new Error("后端还没设置 API Key，请先到设置页保存");
+  if (data?.error === "no_key") return new ApiError("后端还没设置 API Key，请先到设置页保存", res.status, "no_key");
   const message = typeof data?.message === "string" && data.message;
-  return new Error(message || `请求失败 (${res.status})`);
+  return new ApiError(message || `请求失败 (${res.status})`, res.status, typeof data?.error === "string" ? data.error : undefined);
 }
+
+// ---------- 收藏本 ----------
+export type FavoriteMsg = { id: string; role: ApiRole; text: string; at: number };
+export type Favorite = { id: string; title: string; note: string; source: string; messages: FavoriteMsg[]; createdAt: number };
+
+// ---------- 记忆本（字段对齐 Serein：Scene / Event / 喜好 + 人设；见 docs/MEMORY_GATEWAY.md） ----------
+export type MemoryKind = "scene" | "event" | "preference" | "persona";
+export type MemoryStatus = "active" | "archived";
+export type PreferenceInfo = { subject: "user" | "ai" | "both"; polarity: "like" | "dislike"; keywords: string[]; reason: string };
+export type MemorySource = { type: "chat" | "manual" | "import"; messageIds: string[] };
+/** 记忆条目上可选的扩展字段（旧后端不认识也不会坏，只是不保存） */
+export type MemoryExtra = {
+  kind?: MemoryKind;
+  cues?: string[];          // 召回线索，1–8 条，每条 ≤80 字（Serein write_scene 的 cues）
+  domain?: string;          // 主域 / 分类
+  status?: MemoryStatus;    // 归档后不进提示词、不参加召回
+  favorite?: boolean;
+  importance?: number;      // 1–5
+  date?: string;            // YYYY-MM-DD，记忆发生的日子
+  preference?: PreferenceInfo;
+  source?: MemorySource;
+};
+export type RecallHit = { id: string; tab?: string; kind?: MemoryKind; title: string; text: string; score: number };
 
 export interface ChatMsgInput {
   role: ApiRole;
@@ -40,12 +77,18 @@ export interface ChatMsgInput {
 /** 流式聊天：onDelta 每次收到增量文本；signal 用于停止生成 */
 export async function chatStream(
   messages: ChatMsgInput[],
-  opts: { model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void }
+  opts: {
+    model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void;
+    /** 前端自己的消息 id：后端按这个存，之后删除 / 重新生成才对得上 */
+    ids?: { user?: string; echo?: string };
+    /** 重新生成本轮：用户消息已经在记录里，后端不再存一遍 */
+    regenerate?: boolean;
+  }
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson" }),
+    body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined }),
     signal: opts.signal,
   });
   if (!res.ok) throw await requestError(res);
@@ -87,6 +130,22 @@ export const api = {
   // 聊天历史
   getHistory: () => jsonFetch<{ messages: any[] }>("/api/chat/history"),
   chatStream,
+  /** 批量删除聊天记录（多选删除、重新生成前删旧回复） */
+  deleteMessages: (ids: string[]) =>
+    jsonFetch<{ ok: true; deleted: number }>("/api/chat/messages", { method: "DELETE", body: JSON.stringify({ ids }) }),
+
+  // 收藏本
+  getFavorites: () => jsonFetch<{ favorites: Favorite[] }>("/api/favorites", { cache: "no-store" }),
+  addFavorite: (f: { messages: FavoriteMsg[]; title?: string; note?: string; source?: string }) =>
+    jsonFetch<Favorite>("/api/favorites", { method: "POST", body: JSON.stringify(f) }),
+  updateFavorite: (id: string, patch: { title?: string; note?: string }) =>
+    jsonFetch<Favorite>(`/api/favorites/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteFavorite: (id: string) => jsonFetch(`/api/favorites/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // 美化设置云端备份（不含图片）
+  getBeauty: () => jsonFetch<{ beauty: unknown; savedAt: number }>("/api/beauty", { cache: "no-store" }),
+  putBeauty: (beauty: unknown, savedAt: number) =>
+    jsonFetch<{ ok: true; savedAt: number }>("/api/beauty", { method: "PUT", body: JSON.stringify({ beauty, savedAt }) }),
 
   // 设置（Key 只走后端，前端拿到的已脱敏）
   getSettings: () => jsonFetch("/api/settings"),
@@ -108,11 +167,14 @@ export const api = {
   testMemoryModel: (kind: MemoryModelKind) =>
     jsonFetch<{ ok: boolean; message: string }>(`/api/settings/memory-models/${kind}/test`, { method: "POST" }),
   getMemory: () => jsonFetch<{ memory: any[]; reminders: any[] }>("/api/memory"),
-  addMemory: (m: { tab: string; title?: string; text: string; pinned?: boolean }) =>
+  addMemory: (m: { tab?: string; title?: string; text: string; pinned?: boolean } & MemoryExtra) =>
     jsonFetch("/api/memory", { method: "POST", body: JSON.stringify(m) }),
   updateMemory: (id: string, patch: Record<string, unknown>) =>
     jsonFetch(`/api/memory/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
   deleteMemory: (id: string) => jsonFetch(`/api/memory/${id}`, { method: "DELETE" }),
+  /** 记忆召回测试：先向量筛选再重排；没配置模型时后端回 503 memory_recall_unconfigured */
+  recallMemory: (query: string, limit = 5) =>
+    jsonFetch<{ results: RecallHit[] }>("/api/memory/recall", { method: "POST", body: JSON.stringify({ query, limit }) }),
 
   // 提醒
   addReminder: (r: { text: string; time: number; pinned?: boolean }) =>

@@ -1,4 +1,5 @@
 import type { Card, FileItem, FileKind, MemoryItem, Msg, Reminder } from "./store";
+import type { Favorite } from "./api";
 
 export type Think = NonNullable<Msg["think"]>;
 
@@ -11,12 +12,23 @@ export const seedMessages: Msg[] = [
   { id: "m3", role: "echo", text: "记好啦，今晚 21:00 提醒你洗衣服 ₍ᐢ•ﻌ•ᐢ₎", status: "done", at: now - 2.9 * H },
 ];
 
+// 记忆本的本地样例（后端连不上时）：字段对齐 Serein 的 Scene / Event / 喜好
 export const seedMemory: MemoryItem[] = [
-  { id: "p1", tab: "persona", title: "echo 的性格", text: "温柔、话不多，喜欢用颜文字，说话像雾天里的风铃。", pinned: true, updatedAt: now - 48 * H },
-  { id: "p2", tab: "persona", title: "称呼", text: "叫我「小雾」，不要叫全名。", pinned: false, updatedAt: now - 30 * H },
-  { id: "t1", tab: "text", title: "喜欢的音乐", text: "wave to earth、boynextdoor，下雨天想听 love.", pinned: true, updatedAt: now - 20 * H },
-  { id: "t2", tab: "text", title: "口味", text: "不吃香菜，奶茶三分糖去冰。", pinned: false, updatedAt: now - 10 * H },
-  { id: "s1", tab: "summary", title: "今日总结", text: "上午整理了 Aidoku 图源，下午搭了 echo 的界面草稿，晚上记得洗衣服。", pinned: false, updatedAt: now - 1 * H },
+  { id: "p1", tab: "persona", kind: "persona", title: "echo 的性格", text: "温柔、话不多，喜欢用颜文字，说话像雾天里的风铃。", pinned: true, importance: 5, status: "active", createdAt: now - 72 * H, updatedAt: now - 48 * H },
+  { id: "p2", tab: "persona", kind: "persona", title: "称呼", text: "叫我「小雾」，不要叫全名。", pinned: false, importance: 4, status: "active", createdAt: now - 40 * H, updatedAt: now - 30 * H },
+  { id: "t1", tab: "text", kind: "scene", title: "喜欢的音乐", text: "她说下雨天最想听 wave to earth 的 love.，还把 boynextdoor 的新歌循环了一整晚。", cues: ["下雨天", "音乐", "wave to earth"], domain: "日常", pinned: true, importance: 3, status: "active", createdAt: now - 26 * H, updatedAt: now - 20 * H },
+  { id: "t2", tab: "text", kind: "preference", title: "口味", text: "不吃香菜，奶茶三分糖去冰。", preference: { subject: "user", polarity: "dislike", keywords: ["香菜", "奶茶"], reason: "点外卖时说过好几次" }, pinned: false, importance: 3, status: "active", createdAt: now - 12 * H, updatedAt: now - 10 * H },
+  { id: "s1", tab: "summary", kind: "event", title: "今日总结", text: "上午整理了 Aidoku 图源，下午搭了 echo 的界面草稿，晚上记得洗衣服。", cues: ["echo 界面", "洗衣服"], pinned: false, importance: 2, status: "active", date: new Date(now).toISOString().slice(0, 10), createdAt: now - 2 * H, updatedAt: now - 1 * H },
+];
+
+export const seedFavorites: Favorite[] = [
+  {
+    id: "fav-demo", title: "记好啦，今晚 21:00 提醒你洗衣服", note: "", source: "chat", createdAt: now - 2.8 * H,
+    messages: [
+      { id: "m2", role: "user", text: "帮我记一下，晚上九点要洗衣服", at: now - 2.9 * H },
+      { id: "m3", role: "echo", text: "记好啦，今晚 21:00 提醒你洗衣服 ₍ᐢ•ﻌ•ᐢ₎", at: now - 2.9 * H },
+    ],
+  },
 ];
 
 export const seedReminders: Reminder[] = [
