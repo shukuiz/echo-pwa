@@ -16,6 +16,7 @@ before(async () => {
   process.env.ECHO_DATA_DIR = directory;
   storage = await import("../src/storage.js");
   const { default: memoryRoute } = await import("../src/routes/memory.js");
+  const { default: settingsRoute } = await import("../src/routes/settings.js");
   upstream = Fastify();
   upstream.post("/v1/embeddings", async ({ body, headers }) => {
     assert.equal(headers.authorization, "Bearer test-embed-key");
@@ -31,7 +32,7 @@ before(async () => {
   upstream.post("/v1/rerank", async ({ body, headers }, reply) => {
     assert.equal(headers.authorization, "Bearer test-rerank-key");
     assert.equal(body.model, "test-rerank");
-    assert.equal(body.query, query);
+    assert.ok([query, "这是一条连接测试。"].includes(body.query));
     assert.equal(body.return_documents, false);
     assert.equal(body.top_n, body.documents.length);
     assert.ok(!body.documents.some((text) => /不相关|私人设定/.test(text)));
@@ -50,6 +51,7 @@ before(async () => {
   app = Fastify();
   installAuth(app, { ECHO_AUTH_ORIGIN: origin, ECHO_AUTH_PASSWORD: password });
   await app.register(memoryRoute);
+  await app.register(settingsRoute);
   const login = await app.inject({ method: "POST", url: "/api/auth/login", headers: { origin }, payload: { password } });
   assert.equal(login.statusCode, 200);
   headers = { origin, cookie: login.headers["set-cookie"].split(";")[0] };
@@ -113,4 +115,34 @@ test("failed or malformed reranking never falls back to vector results", async (
     assert.equal(response.json().error, "memory_rerank_failed");
     assert.ok(!response.body.includes("provider secret text"));
   }
+});
+
+test("memory model settings save and test independently without leaking keys", async () => {
+  await seed();
+  const url = "/api/settings/memory-models";
+  const base = upstream.listeningOrigin;
+  const changed = await app.inject({
+    method: "PUT", url: url + "/embedding", headers,
+    payload: { url: base + "/v1/embeddings", model: "test-embed", apiKey: "test-embed-key" },
+  });
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.deepEqual(changed.json().embedding, { url: base + "/v1/embeddings", model: "test-embed", hasKey: true });
+  const keyLooks = await app.inject({ method: "GET", url, headers });
+  assert.equal(keyLooks.statusCode, 200);
+  assert.doesNotMatch(keyLooks.body, /test-embed-key|test-rerank-key/);
+  const connectivity = await app.inject({ method: "POST", url: url + "/embedding/test", headers });
+  assert.equal(connectivity.statusCode, 200, connectivity.body);
+  assert.equal(connectivity.json().ok, true);
+  const rerankTest = await app.inject({ method: "POST", url: url + "/rerank/test", headers });
+  assert.equal(rerankTest.json().ok, true);
+  assert.equal((await app.inject({ method: "POST", url: url + "/rerank/test", headers: { origin } })).statusCode, 401);
+  assert.equal((await recall()).statusCode, 200);
+
+  const edit = await app.inject({
+    method: "PUT", url: url + "/embedding", headers,
+    payload: { url: base + "/another-endpoint", model: "new-model" },
+  });
+  assert.equal(edit.statusCode, 200);
+  assert.equal(edit.json().embedding.hasKey, false);
+  assert.equal((await recall()).json().error, "memory_embedding_failed");
 });
