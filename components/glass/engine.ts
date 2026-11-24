@@ -14,19 +14,23 @@ export type HomeProvider = {
   entries: () => Entry[];             // 网格里的玻璃（位置来自缓存，滑动时不读布局）
   dragged?: () => Entry | null;        // 正在拖的那块（总是用 WebGL，画在最上面）
   restRect: (el: HTMLElement) => Rect | null; // 元素"在它那一页摆正时"的位置：字色只和这个有关
+  sync?: () => void;                   // 引擎要重读位置时先让网格重量一次自己的原点（缓存的 px/py 可能过期）
 };
 type Reg = { chrome: boolean; rect: DOMRect | null; clip: [number, number] | null };
+/** 画布的坐标基准：画布在屏幕上的位置和大小（CSS px）。所有玻璃坐标都先减掉 left/top 再送进着色器 */
+export type Basis = { left: number; top: number; w: number; h: number };
+type DebugRow = { id: string; gl: { x: number; y: number; w: number; h: number }; dom: { x: number; y: number; w: number; h: number } };
 type ElX = HTMLElement & { _eff?: RGB };
 
 const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
 const FS = `
 precision highp float;
-uniform sampler2D uTex; uniform vec2 uRes; uniform vec2 uImg; uniform float uDpr, uTime;
+uniform sampler2D uTex; uniform vec2 uRes; uniform vec2 uImg; uniform vec2 uScale; uniform float uTime;
 uniform vec4 uRect[${MAX}]; uniform vec4 uOpt[${MAX}]; uniform vec4 uClip[${MAX}]; uniform int uN;
 uniform float uRefract, uTint, uBlur, uEdge, uShine, uWobble;
 uniform vec3 uTintCol, uMeCol;
 vec2 coverUV(vec2 px){
-  vec2 s = uRes / uDpr; float sa = s.x/s.y, ia = uImg.x/uImg.y;
+  vec2 s = uRes / uScale; float sa = s.x/s.y, ia = uImg.x/uImg.y;
   vec2 uv = px / s;
   if (sa > ia) { float k = ia/sa; uv.y = uv.y*k + (1.-k)*.5; } else { float k = sa/ia; uv.x = uv.x*k + (1.-k)*.5; }
   return clamp(uv, .001, .999);
@@ -39,7 +43,7 @@ vec3 tap(vec2 px, float bl){
   return c/9.;
 }
 void main(){
-  vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uDpr;
+  vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uScale; // 画布 CSS 像素，原点 = 画布左上角
   vec3 col = texture2D(uTex, coverUV(px)).rgb;
   float shadow = 0.;
   for (int i=0;i<${MAX};i++){
@@ -99,12 +103,19 @@ class GlassEngine {
   tickers = new Set<() => boolean | void>();
   walls = 0; glWalls = 0;
   rectsDirty = true; needDraw = true;
-  raf = 0; adaptT = 0; lastRectRead = 0;
+  raf = 0; adaptT = 0; lastCheck = 0;
+  basis: Basis = { left: 0, top: 0, w: 0, h: 0 };
+  scale: [number, number] = [1, 1]; // 缓冲区像素 / CSS 像素，横竖各算各的（不再假设 100vh == innerHeight）
+  lastN = 0;
+  debug = false;                    // ?glassdebug 或开发模式：每帧记录"画的位置 vs DOM 位置"给自动化测试
+  debugSnap: { frame: number; basis: Basis & { bufW: number; bufH: number; canvas: Rect }; rows: DebugRow[] } | null = null;
+  private probe: HTMLDivElement | null = null;
   rad = new WeakMap<HTMLElement, number>();
   t0 = performance.now();
   frames = 0;                 // 测试用：画了多少帧
   rectF = new Float32Array(MAX * 4); optF = new Float32Array(MAX * 4); clipF = new Float32Array(MAX * 4);
-  private ro: ResizeObserver | null = null;
+  // 登记可能早于 init（子组件的 layout effect 先跑），所以观察器一开始就建好
+  private ro: ResizeObserver | null = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => this.invalidate()) : null;
 
   init(canvas: HTMLCanvasElement) {
     if (this.canvas === canvas) return;
@@ -129,7 +140,7 @@ class GlassEngine {
         const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
         const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-        for (const n of ["uTex", "uRes", "uImg", "uDpr", "uTime", "uRect", "uOpt", "uClip", "uN", "uRefract", "uTint", "uBlur", "uEdge", "uShine", "uWobble", "uTintCol", "uMeCol"]) this.U[n] = gl.getUniformLocation(prog, n);
+        for (const n of ["uTex", "uRes", "uImg", "uScale", "uTime", "uRect", "uOpt", "uClip", "uN", "uRefract", "uTint", "uBlur", "uEdge", "uShine", "uWobble", "uTintCol", "uMeCol"]) this.U[n] = gl.getUniformLocation(prog, n);
         this.tex = gl.createTexture();
         this.gl = gl; this.prog = prog; this.noGL = false;
       } catch (e) {
@@ -138,10 +149,25 @@ class GlassEngine {
       }
     }
     canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); this.gl = null; this.noGL = true; this.applyClasses(); this.schedAdapt(); });
+    // 探针：一个 position:fixed; inset:0 的隐形盒子 = 画布真正该盖住的区域（iOS 上它不一定等于 innerWidth×innerHeight 或 100vw×100vh）
+    const pr = document.createElement("div");
+    pr.id = "g-probe"; pr.setAttribute("aria-hidden", "");
+    pr.style.cssText = "position:fixed;left:0;top:0;right:0;bottom:0;visibility:hidden;pointer-events:none;z-index:-1";
+    document.body.appendChild(pr); this.probe = pr;
+    this.ro?.observe(pr);
+    try { this.debug = process.env.NODE_ENV !== "production" || new URLSearchParams(location.search).has("glassdebug"); } catch {}
     this.resize();
     window.addEventListener("resize", this.onResize);
+    window.addEventListener("orientationchange", this.onResize);
+    window.visualViewport?.addEventListener("resize", this.onResize);
+    window.visualViewport?.addEventListener("scroll", this.onResize);
+    window.addEventListener("pageshow", this.onResize);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) this.onResize(); });
     window.addEventListener("scroll", this.onScroll, { capture: true, passive: true });
-    this.ro = new ResizeObserver(() => { this.rectsDirty = true; this.needDraw = true; });
+    document.addEventListener("load", this.onAsset, true); // 图片/字体加载完，内容可能挪了
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    fonts?.ready.then(() => this.invalidate()).catch(() => {});
+    fonts?.addEventListener?.("loadingdone", () => this.invalidate());
     this.applyClasses();
     if (this.wpUrl && !this.imgReady) this.setWallpaper(this.wpUrl, true);
     (window as unknown as { __echoGlass?: GlassEngine }).__echoGlass = this; // 调试/自动化测试用：读帧数、模式
@@ -150,13 +176,32 @@ class GlassEngine {
   /** CSS 模式：没有 WebGL、减弱动态效果、或仿真风格都不跑着色器 */
   get cssMode() { return this.noGL || this.rm; }
 
-  private onResize = () => { this.resize(); if (this.img && this.imgReady) this.sampler.build(this.img, innerWidth, innerHeight); this.rectsDirty = true; this.needDraw = true; this.schedAdapt(); };
+  private onResize = () => { this.resize(); this.invalidate(); this.schedAdapt(120); };
   private onScroll = () => { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(120); };
+  private onAsset = (e: Event) => { const t = e.target as Element | null; if (t && t.tagName === "IMG" && t.closest?.(".bty")) this.invalidate(); };
+  /** 量探针 → 把画布（和 #g-wall）摆到同一个盒子上，缓冲区按这个盒子的 CSS 尺寸 × DPR(≤2) 建。返回基准是否变了 */
   private resize() {
-    if (!this.canvas) return;
-    const d = Math.min(window.devicePixelRatio || 1, 2);
-    this.canvas.width = Math.round(innerWidth * d); this.canvas.height = Math.round(innerHeight * d);
+    const cv = this.canvas, pr = this.probe;
+    if (!cv || !pr) return false;
+    const r = pr.getBoundingClientRect();
+    const w = r.width || document.documentElement.clientWidth || innerWidth, h = r.height || document.documentElement.clientHeight || innerHeight;
+    const b = this.basis, changed = b.w !== w || b.h !== h || b.left !== r.left || b.top !== r.top;
+    const d = Math.min(window.devicePixelRatio || 1, 2), bw = Math.max(1, Math.round(w * d)), bh = Math.max(1, Math.round(h * d));
+    if (changed || cv.width !== bw || cv.height !== bh) {
+      this.basis = { left: r.left, top: r.top, w, h };
+      const st = cv.style;
+      st.width = w + "px"; st.height = h + "px";
+      if (cv.width !== bw) cv.width = bw;
+      if (cv.height !== bh) cv.height = bh;
+      this.scale = [bw / w, bh / h];
+      if (this.img && this.imgReady) this.sampler.build(this.img, w, h);
+      this.rectsDirty = true; this.needDraw = true;
+      return true;
+    }
+    return false;
   }
+  /** 屏幕坐标（getBoundingClientRect）→ 画布坐标 */
+  local(r: Rect): Rect { return { left: r.left - this.basis.left, top: r.top - this.basis.top, width: r.width, height: r.height }; }
 
   // ---------- 外观 ----------
   setLook(b: Beauty) {
@@ -198,7 +243,8 @@ class GlassEngine {
     img.onload = () => {
       if (this.wpUrl !== url) return;
       this.img = img; this.imgReady = true;
-      this.sampler.build(img, innerWidth, innerHeight);
+      this.resize();
+      this.sampler.build(img, this.basis.w || innerWidth, this.basis.h || innerHeight);
       if (this.look) this.setLook(this.look);
       const gl = this.gl;
       if (gl && this.tex) {
@@ -228,7 +274,7 @@ class GlassEngine {
   addTicker(f: () => boolean | void) { this.tickers.add(f); this.kick(); return () => { this.tickers.delete(f); }; }
   enterWall(gl: boolean) { this.walls++; if (gl) this.glWalls++; this.applyClasses(); this.needDraw = true; this.kick(); this.schedAdapt(); }
   leaveWall(gl: boolean) { this.walls = Math.max(0, this.walls - 1); if (gl) this.glWalls = Math.max(0, this.glWalls - 1); this.applyClasses(); }
-  invalidate() { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(); }
+  invalidate() { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(); this.kick(); }
 
   // ---------- 一帧只有一个 rAF：先跑翻页/拖动，再画玻璃 ----------
   private kick() { if (!this.raf && typeof window !== "undefined") this.raf = requestAnimationFrame(this.frame); }
@@ -239,8 +285,9 @@ class GlassEngine {
     if (moving) this.needDraw = true;
     const drawing = this.drawable();
     if (drawing) {
+      // 自检（不是靠它对齐，对齐靠上面的各种事件）：静止时每 0.5 秒量一下探针，iOS 偶尔改了视口却不发 resize
       const now = performance.now();
-      if (now - this.lastRectRead > 300) { this.rectsDirty = true; this.lastRectRead = now; } // 兜底：内容变了但没触发 resize/scroll
+      if (!moving && now - this.lastCheck > 500) { this.lastCheck = now; if (this.resize()) this.home?.sync?.(); }
       if (this.look?.motion || this.needDraw) { this.needDraw = false; this.draw(); }
     }
     if (this.walls > 0 || this.tickers.size) this.kick();
@@ -252,6 +299,8 @@ class GlassEngine {
   private readRegs() {
     if (!this.rectsDirty) return;
     this.rectsDirty = false;
+    this.resize();
+    this.home?.sync?.();
     this.regs.forEach((r, el) => {
       r.rect = el.getBoundingClientRect();
       const ce = el.closest<HTMLElement>("[data-gclip]");
@@ -270,14 +319,15 @@ class GlassEngine {
   private draw() {
     const gl = this.gl!, cv = this.canvas!, b = this.look!;
     this.readRegs();
-    const vw = innerWidth, vh = innerHeight, list: Entry[] = [], chrome: Entry[] = [];
+    // 下面所有 x/y 都是屏幕坐标（getBoundingClientRect 那套），写进着色器前统一减掉画布原点
+    const B = this.basis, ox = B.left, oy = B.top, vw = B.w, vh = B.h, list: Entry[] = [], chrome: Entry[] = [];
     let grid: Entry[] = [];
     this.regs.forEach((r, el) => {
       const q = r.rect; if (!q || !q.width) return;
       const top = Math.max(q.top, r.clip ? r.clip[0] : -1e9), bot = Math.min(q.bottom, r.clip ? r.clip[1] : 1e9);
-      const visible = bot > 0 && top < vh && q.right > 0 && q.left < vw && bot > top;
+      const visible = bot > oy && top < oy + vh && q.right > ox && q.left < ox + vw && bot > top;
       if (!visible) { if (!r.chrome) this.setCss(el, false); return; }
-      const e: Entry = { el, x: q.left, y: q.top, w: q.width, h: q.height, clip: r.clip, vis: (bot - top) * (Math.min(q.right, vw) - Math.max(q.left, 0)) };
+      const e: Entry = { el, x: q.left, y: q.top, w: q.width, h: q.height, clip: r.clip, vis: (bot - top) * (Math.min(q.right, ox + vw) - Math.max(q.left, ox)) };
       (r.chrome ? chrome : grid).push(e);
     });
     if (this.home) grid = grid.concat(this.home.entries());
@@ -297,8 +347,8 @@ class GlassEngine {
       if (n >= MAX) break;
       const el = c.el, isMe = el.dataset.hue === "me";
       const tint = (+(el.dataset.tint || 0)) * (isMe && b.bubMode === "glass" ? 0.3 : 1);
-      clipF.set([c.clip ? c.clip[0] : -1e4, c.clip ? c.clip[1] : 1e4, +(el.dataset.wa ?? 1), el.dataset.ink === "d" ? 1 : 0], n * 4);
-      rectF.set([c.x, c.y, c.w, c.h], n * 4);
+      clipF.set([c.clip ? c.clip[0] - oy : -1e4, c.clip ? c.clip[1] - oy : 1e4, +(el.dataset.wa ?? 1), el.dataset.ink === "d" ? 1 : 0], n * 4);
+      rectF.set([c.x - ox, c.y - oy, c.w, c.h], n * 4);
       optF.set([this.radOf(el) * (c.w / (c.w0 || c.w)), tint, isMe && b.bubMode === "tint" ? 1 : 0, el.hasAttribute("data-rim") ? 1 : 0], n * 4);
       n++;
     }
@@ -306,13 +356,29 @@ class GlassEngine {
     gl.viewport(0, 0, cv.width, cv.height);
     const U = this.U;
     gl.uniform1i(U.uTex, 0); gl.uniform2f(U.uRes, cv.width, cv.height); gl.uniform2f(U.uImg, this.img!.naturalWidth, this.img!.naturalHeight);
-    gl.uniform1f(U.uDpr, cv.width / vw); gl.uniform1f(U.uTime, b.motion ? (performance.now() - this.t0) / 1000 : 0);
+    gl.uniform2f(U.uScale, this.scale[0], this.scale[1]); gl.uniform1f(U.uTime, b.motion ? (performance.now() - this.t0) / 1000 : 0);
     gl.uniform4fv(U.uRect, rectF); gl.uniform4fv(U.uOpt, optF); gl.uniform4fv(U.uClip, clipF); gl.uniform1i(U.uN, n);
     gl.uniform1f(U.uRefract, b.P.refract); gl.uniform1f(U.uTint, b.P.tint); gl.uniform1f(U.uBlur, b.P.blur);
     gl.uniform1f(U.uEdge, b.P.edge); gl.uniform1f(U.uShine, b.P.shine); gl.uniform1f(U.uWobble, b.P.wobble);
     gl.uniform3fv(U.uTintCol, tint); gl.uniform3fv(U.uMeCol, me);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    this.frames++;
+    this.frames++; this.lastN = n;
+    if (this.debug) this.snapshot(list.slice(0, n));
+  }
+  /** 调试：按"画布在屏幕上的真实位置 × 缓冲区换算"反推每块玻璃画在了屏幕哪里，和同一时刻的 DOM 位置放一起 */
+  private snapshot(list: Entry[]) {
+    const cv = this.canvas!, cr = cv.getBoundingClientRect(), kx = cr.width / cv.width, ky = cr.height / cv.height;
+    const [sx, sy] = this.scale, rows: DebugRow[] = [];
+    list.forEach((c, i) => {
+      const f = this.rectF.subarray(i * 4, i * 4 + 4), d = c.el.getBoundingClientRect();
+      const dom = { x: d.left, y: d.top, w: d.width, h: d.height }; // 拖动时 .jig 的 scale(1.06) 已经算在 DOM 框里
+      rows.push({
+        id: c.el.closest<HTMLElement>(".it")?.dataset.id || c.el.getAttribute("aria-label") || c.el.className,
+        gl: { x: cr.left + f[0] * sx * kx, y: cr.top + f[1] * sy * ky, w: f[2] * sx * kx, h: f[3] * sy * ky },
+        dom,
+      });
+    });
+    this.debugSnap = { frame: this.frames, basis: { ...this.basis, bufW: cv.width, bufH: cv.height, canvas: { left: cr.left, top: cr.top, width: cr.width, height: cr.height } }, rows };
   }
 
   // ---------- 自动字色：每个元素按"底色×不透明度 叠在它身后那块壁纸上"的亮度挑深浅 ----------
@@ -337,10 +403,10 @@ class GlassEngine {
   adapt() {
     const b = this.look;
     if (!b || !this.walls || !this.sampler.sat) return;
-    const real = b.theme === "real", meRGB = hex2rgb(b.me), vh = innerHeight;
+    const real = b.theme === "real", meRGB = hex2rgb(b.me), vh = this.basis.h || innerHeight;
     for (const el of Array.from(document.querySelectorAll<ElX>(".bty .g"))) {
       if (el.hasAttribute("data-rim")) continue;
-      const r = this.restRect(el); if (!r.width || r.top > vh + 200 || r.top + r.height < -200) continue;
+      const r = this.local(this.restRect(el)); if (!r.width || r.top > vh + 200 || r.top + r.height < -200) continue;
       const parent = el.parentElement?.closest(".g") as ElX | null;
       const unders = real && parent && parent._eff ? [parent._eff] : this.sampler.bands(r);
       const sh = this.shellOf(el);
@@ -355,7 +421,7 @@ class GlassEngine {
     }
     // 直接压在壁纸上的字：状态栏、图标名、时间、翻页点
     for (const el of Array.from(document.querySelectorAll<HTMLElement>(".bty [data-onwp]"))) {
-      const r = this.restRect(el); if (!r.width) continue;
+      const r = this.local(this.restRect(el)); if (!r.width) continue;
       const pg = el.parentElement?.closest(".g") as ElX | null;
       const unders = pg && pg._eff ? [pg._eff] : this.sampler.bands(r);
       let ink: string, tsh: string;

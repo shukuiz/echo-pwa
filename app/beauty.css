@@ -20,7 +20,11 @@ html.f-ipa body, html.f-ipa input, html.f-ipa textarea, html.f-ipa button, html.
 }
 
 /* 壁纸底 + WebGL 画布：只有带壁纸的页面才显示 */
-#g-wall, #g-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; display: none; pointer-events: none; }
+/* 不用 100vw/100vh：iOS（尤其主屏 PWA）上它们和 innerWidth/innerHeight、和 fixed 盒子都可能不一样，画布会被拉伸、玻璃错位。
+   壁纸用 inset:0 贴满 fixed 盒子；画布的 width/height 由引擎量同一个盒子后用 px 写进去，缓冲区按同一个尺寸建 */
+#g-wall, #g-canvas { position: fixed; left: 0; top: 0; z-index: 0; display: none; pointer-events: none; }
+#g-wall { right: 0; bottom: 0; }
+#g-canvas { width: 100%; height: 100%; }
 #g-wall { background: #8fa6bd var(--g-wpimg) center / cover no-repeat; }
 html.wall-on #g-wall { display: block; }
 html.wall-gl #g-canvas { display: block; }
@@ -76,7 +80,6 @@ html.th-glass.nog .bty .g.rim, html.th-glass .bty .g.rim[data-cssg] { box-shadow
 /* 网格：手指 1:1 拖页，松手按速度/距离吸附 */
 .pager { flex: 1; overflow: hidden; position: relative; touch-action: pan-y; }
 .pages { position: relative; height: 100%; transform: translate3d(0,0,0); will-change: transform; }
-.pages.snapping { transition: transform .28s cubic-bezier(.22,.8,.26,1); }
 .hdots { height: 22px; display: flex; justify-content: center; align-items: center; gap: 7px; flex-shrink: 0; margin-bottom: calc(112px + env(safe-area-inset-bottom)); }
 .hdots i { width: 7px; height: 7px; border-radius: 50%; background: var(--g-wpink); opacity: .4; box-shadow: 0 0 4px rgba(20,40,70,.3); }
 .hdots i.on { opacity: 1; }
@@ -236,7 +239,7 @@ textarea.fld { resize: none; height: 84px; line-height: 1.5; }
 
 @media (prefers-reduced-motion: reduce) {
   .editing .jig { animation: none; } .editing .it .jig { outline: 1.5px dashed rgba(255,255,255,.55); outline-offset: 3px; border-radius: 22px; }
-  .it, .gsheet, .media img, .media video, .pages.snapping { transition: none; }
+  .it, .gsheet, .media img, .media video { transition: none; }
   .flip b.tick { animation: none; }
 }
 
