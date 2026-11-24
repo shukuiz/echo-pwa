@@ -6,7 +6,10 @@ import {
 } from "@/lib/color";
 
 export const MAX = 16;       // 着色器一次最多 16 块
-export const GRID_CAP = 12;  // 桌面网格/页面内容最多 12 块，其余给 Dock/标题栏（最多 4 块），超出的走 CSS 玻璃
+export const GRID_CAP = 12;
+const MAX_DPR = 2;               // 画布最高按 2 倍像素画（以前 1.5，玻璃边缘偏糊）
+const PIXEL_BUDGET = 1_800_000;  // 画布缓冲区像素上限（以前 90 万）
+const TEXTURE_CAP = 2048;        // 壁纸纹理最长边（以前 1536；上传的壁纸本来就缩到 2048）  // 桌面网格/页面内容最多 12 块，其余给 Dock/标题栏（最多 4 块），超出的走 CSS 玻璃
 
 export type Rect = { left: number; top: number; width: number; height: number };
 export type Entry = { el: HTMLElement; x: number; y: number; w: number; h: number; clip?: [number, number] | null; clipX?: [number, number]; vis?: number; w0?: number };
@@ -121,6 +124,9 @@ class GlassEngine {
 
   private mobileBudget = false;
   private lastPaint = -Infinity;
+  private moving = false;          // 这一帧有翻页 / 拖动在动
+  private settleUntil = 0;         // 滚动、尺寸变化后的一小段时间里每帧都重读位置（惯性滚动、过渡动画）
+  private lastRead = 0;
 
   init(canvas: HTMLCanvasElement) {
     if (this.canvas === canvas) return;
@@ -184,8 +190,9 @@ class GlassEngine {
   /** CSS 模式：没有 WebGL、减弱动态效果、或仿真风格都不跑着色器 */
   get cssMode() { return this.noGL || this.rm; }
 
+  private settle(ms = 700) { this.settleUntil = Math.max(this.settleUntil, performance.now() + ms); }
   private onResize = () => { this.resize(); this.invalidate(); this.schedAdapt(120); };
-  private onScroll = () => { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(120); this.kick(); };
+  private onScroll = () => { this.rectsDirty = true; this.needDraw = true; this.settle(); this.schedAdapt(120); this.kick(); };
   private onAsset = (e: Event) => { const t = e.target as Element | null; if (t && t.tagName === "IMG" && t.closest?.(".bty")) this.invalidate(); };
   /** 用实际画布的屏幕坐标对齐玻璃，限制缓冲区像素数。 */
   private resize() {
@@ -194,7 +201,8 @@ class GlassEngine {
     const r = (this.drawable() ? cv : pr).getBoundingClientRect();
     const w = r.width || document.documentElement.clientWidth || innerWidth, h = r.height || document.documentElement.clientHeight || innerHeight;
     const b = this.basis, changed = b.w !== w || b.h !== h || b.left !== r.left || b.top !== r.top;
-    const d = this.gl ? Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(900_000 / (w * h))) : 0;
+    // 清晰度：最高 2 倍、缓冲区约 180 万像素封顶（iPhone 393×852 正好跑满 2 倍 ≈ 134 万像素；大屏按预算往下缩）
+    const d = this.gl ? Math.min(window.devicePixelRatio || 1, MAX_DPR, Math.sqrt(PIXEL_BUDGET / (w * h))) : 0;
     const bw = Math.max(1, Math.round(w * d)), bh = Math.max(1, Math.round(h * d));
     if (changed || cv.width !== bw || cv.height !== bh) {
       this.basis = { left: r.left, top: r.top, w, h };
@@ -259,7 +267,7 @@ class GlassEngine {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         const longest = Math.max(img.naturalWidth, img.naturalHeight);
-        const limit = Math.min(1536, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+        const limit = Math.min(TEXTURE_CAP, gl.getParameter(gl.MAX_TEXTURE_SIZE));
         let source: HTMLImageElement | HTMLCanvasElement = img;
         if (longest > limit) {
           const thumbnail = document.createElement("canvas");
@@ -304,7 +312,7 @@ class GlassEngine {
   addTicker(f: () => boolean | void) { this.tickers.add(f); this.kick(); return () => { this.tickers.delete(f); }; }
   enterWall(gl: boolean) { this.walls++; if (gl) this.glWalls++; this.applyClasses(); this.needDraw = true; this.kick(); this.schedAdapt(); }
   leaveWall(gl: boolean) { this.walls = Math.max(0, this.walls - 1); if (gl) this.glWalls = Math.max(0, this.glWalls - 1); this.applyClasses(); }
-  invalidate() { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(); this.kick(); }
+  invalidate() { this.rectsDirty = true; this.needDraw = true; this.settle(); this.schedAdapt(); this.kick(); }
 
   // ---------- 一帧只有一个 rAF：先跑翻页/拖动，再画玻璃 ----------
   private kick() { if (!this.raf && typeof window !== "undefined") this.raf = requestAnimationFrame(this.frame); }
@@ -313,6 +321,7 @@ class GlassEngine {
     let moving = false;
     this.tickers.forEach((f) => { if (f()) moving = true; });
     if (moving) this.needDraw = true;
+    this.moving = moving;
     const drawing = this.drawable();
     if (drawing) {
       // 自检（不是靠它对齐，对齐靠上面的各种事件）：静止时每 0.5 秒量一下探针，iOS 偶尔改了视口却不发 resize
@@ -331,8 +340,13 @@ class GlassEngine {
   }
 
   private readRegs() {
-    if (!this.rectsDirty && !this.mobileBudget) return;
+    // 手机上 iOS 偶尔改了位置却不发事件，所以不能只靠 rectsDirty；但也不必每帧都 getBoundingClientRect：
+    // 有改动 / 正在动 / 刚滚动或刚变过尺寸（700ms 内）时每帧读，静止时每 250ms 复查一次
+    const now = performance.now();
+    const recheck = this.mobileBudget && (this.moving || now < this.settleUntil || now - this.lastRead > 250);
+    if (!this.rectsDirty && !recheck) return;
     this.rectsDirty = false;
+    this.lastRead = now;
     this.resize();
     this.home?.sync?.();
     this.regs.forEach((r, el) => {
