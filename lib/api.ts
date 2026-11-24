@@ -72,6 +72,10 @@ export const api = {
   // 设置（Key 只走后端，前端拿到的已脱敏）
   getSettings: () => jsonFetch("/api/settings"),
   saveSettings: (patch: Record<string, unknown>) => jsonFetch("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  createPreset: (p: { name: string; url: string; apiKey?: string }) => jsonFetch("/api/presets", { method: "POST", body: JSON.stringify(p) }),
+  updatePreset: (id: string, p: { name?: string; url?: string; apiKey?: string }) =>
+    jsonFetch(`/api/presets/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(p) }),
+  deletePreset: (id: string) => jsonFetch(`/api/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
   testConnection: () => jsonFetch("/api/settings/test", { method: "POST" }),
   // 拉取模型列表（走后端 /models，可选搜索）
   getModels: (q?: string) => jsonFetch<{ models: string[]; error?: string; message?: string }>(`/api/models${q ? `?q=${encodeURIComponent(q)}` : ""}`),

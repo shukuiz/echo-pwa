@@ -1,31 +1,21 @@
-// 工具调用接口：MCP 工具默认走 API；打开动手入口（Codex/Claude）后由后端统一调度执行。
-// 当前先保留接口结构与路由判定，具体工具实现随「后期放功能」接入。
-import { getConfig } from "../config.js";
+// MCP 服务：先列出计划接入的服务（高德地图、麦当劳等），具体调用后期接入
+// 旧的「翻译 / 找图 / 世界书 / 小应用 / 脚本」开关只是模型本身就能做的事，已移除
 
-const TOOL_IDS = ["translate", "media", "worldbook", "miniapp", "script"];
+/** 计划接入的 MCP 服务；status: planned 表示还没接 */
+export const MCP_SERVERS = [
+  { id: "amap", name: "高德地图", desc: "地点搜索、路线规划、周边、天气", status: "planned" },
+  { id: "mcdonalds", name: "麦当劳", desc: "门店、菜单、优惠券、点餐", status: "planned" },
+];
 
 export default async function toolsRoute(app) {
-  // 工具清单 + 当前路由（后端 / API）
-  app.get("/api/tools", async () => {
-    const cfg = await getConfig();
-    const handEnabled = cfg.codexEnabled || cfg.claudeEnabled;
-    const routing = handEnabled ? "backend" : "api";
-    return {
-      tools: TOOL_IDS.map((id) => ({ id, enabled: cfg.tools[id] !== false, routing })),
-      handEnabled,
-      note: handEnabled ? "动手入口已开，工具交给后端执行" : "动手入口未开，工具走 API",
-    };
-  });
+  app.get("/api/tools", async () => ({ servers: MCP_SERVERS }));
 
-  // 工具调用（接口预留；默认走 API，后端执行在后续版本接入）
   app.post("/api/tools/:name", async (req, reply) => {
-    const cfg = await getConfig();
-    const handEnabled = cfg.codexEnabled || cfg.claudeEnabled;
-    reply.code(501);
+    const server = MCP_SERVERS.find((s) => s.id === req.params.name);
+    reply.code(server ? 501 : 404);
     return {
-      error: "not_implemented",
-      routing: handEnabled ? "backend" : "api",
-      message: `工具「${req.params.name}」将在后续版本接入${handEnabled ? "后端执行" : "（走 API）"}`,
+      error: server ? "not_implemented" : "not_found",
+      message: server ? `「${server.name}」MCP 还没接入，后期再做` : "没有这个 MCP 服务",
     };
   });
 }

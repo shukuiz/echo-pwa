@@ -41,7 +41,7 @@ export default async function chatRoute(app) {
     const base = normBase(cfg.proxyUrl);
     if (!/^https?:\/\//i.test(base)) {
       reply.code(400);
-      return { error: "bad_base", message: "代理地址需以 http(s):// 开头" };
+      return { error: "bad_base", message: "还没选择接口，或接口地址不是 http(s):// 开头" };
     }
 
     const body = req.body || {};
