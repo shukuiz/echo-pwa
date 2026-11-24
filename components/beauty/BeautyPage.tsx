@@ -119,6 +119,20 @@ export default function BeautyPage() {
         <Card icon="palette" title="桌面重点色">
           <Swatches label="桌面重点色" list={[["默认", DEFAULT_ACCENT], ["冰蓝", "#2367ad"], ["苔绿", "#41745b"], ["雾紫", "#75529c"]]}
             value={b.accent} onPick={(accent) => setB({ accent })} />
+          <label className="mt-3 flex items-center justify-between gap-3 text-[13px]">
+            色值
+            <input key={b.accent} defaultValue={b.accent} aria-label="桌面重点色色值" maxLength={7} spellCheck={false}
+              autoCapitalize="none" autoCorrect="off" className="field max-w-32 px-3 py-2 font-mono"
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              onBlur={(e) => {
+                const color = e.currentTarget.value.trim().replace(/^#?/, "#").toLowerCase();
+                if (/^#[\da-f]{6}$/.test(color)) setB({ accent: color });
+                else {
+                  e.currentTarget.value = b.accent;
+                  toast("请输入六位十六进制色值");
+                }
+              }} />
+          </label>
         </Card>
 
         <Card icon="type2" title="字体颜色" id="inkcard">

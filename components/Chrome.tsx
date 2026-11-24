@@ -117,8 +117,10 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
       const focused = document.activeElement;
       if (focused instanceof HTMLTextAreaElement && focused.closest(".chat-shell") && viewport.height + 64 < document.documentElement.clientHeight) {
         root.setProperty("--chat-keyboard-height", `${Math.floor(viewport.height)}px`);
+        root.setProperty("--chat-keyboard-top", `${Math.max(0, viewport.offsetTop)}px`);
       } else {
         root.removeProperty("--chat-keyboard-height");
+        root.removeProperty("--chat-keyboard-top");
       }
     };
     resize();
@@ -130,6 +132,7 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
       viewport.removeEventListener("scroll", resize);
       document.removeEventListener("focusout", resize);
       root.removeProperty("--chat-keyboard-height");
+      root.removeProperty("--chat-keyboard-top");
     };
   }, []);
   useEffect(() => {
