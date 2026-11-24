@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IconBack } from "./Icons";
 import { useStore } from "@/lib/store";
+import { WallScreen } from "./glass/Wall";
 
 /** 顶部装饰状态栏（可在设置里手动关闭） */
 export function StatusBar() {
@@ -63,14 +64,19 @@ export function PageShell({
   right,
   children,
   footer,
+  glass,
 }: {
   title: string;
   sub?: React.ReactNode;
   right?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** 有壁纸 + 玻璃标题栏（聊天页）；样式跟「美化」走 */
+  glass?: boolean;
 }) {
   const router = useRouter();
+  const back = () => (window.history.length > 1 ? router.back() : router.push("/"));
+  if (glass) return <GlassShell title={title} sub={sub} right={right} footer={footer} onBack={back}>{children}</GlassShell>;
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-fog">
       <div className="sticky top-0 z-30 bg-fog/85 backdrop-blur-xl">
@@ -78,7 +84,7 @@ export function PageShell({
         <div className="flex h-12 items-center gap-3 px-4">
           <button
             aria-label="返回"
-            onClick={() => (window.history.length > 1 ? router.back() : router.push("/"))}
+            onClick={back}
             className="orb press h-10 w-10 shrink-0"
           >
             <IconBack size={20} />
@@ -94,6 +100,43 @@ export function PageShell({
       {footer}
       <HomeIndicator />
     </div>
+  );
+}
+
+/** 玻璃版外壳：壁纸背景、状态栏字色跟着壁纸、标题栏是 CSS 玻璃（内容滚过去会被模糊） */
+function GlassShell({ title, sub, right, footer, onBack, children }: {
+  title: string; sub?: React.ReactNode; right?: React.ReactNode; footer?: React.ReactNode; onBack: () => void; children: React.ReactNode;
+}) {
+  const { settings } = useStore();
+  const [time, setTime] = useState("");
+  useEffect(() => {
+    const tick = () => { const d = new Date(); setTime(`${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`); };
+    tick();
+    const t = setInterval(tick, 15_000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <WallScreen gl={false} className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col">
+      <div className="gstick sticky top-0 z-30 pt-[env(safe-area-inset-top)]">
+        {settings.showStatusBar !== false && (
+          <div className="flex h-11 items-center justify-between px-7 text-[15px] font-semibold" data-onwp aria-hidden>
+            <span className="tabular-nums">{time}</span>
+            <span className="flex items-center gap-1.5 text-[12px]">5G <span className="bat" /></span>
+          </div>
+        )}
+        <div className="g cbar wbar" data-cssg data-tint="0.08">
+          <button className="back" aria-label="返回" onClick={onBack}><IconBack size={20} /></button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[17px] font-semibold leading-tight">{title}</h1>
+            {sub}
+          </div>
+          {right}
+        </div>
+      </div>
+      <main className="flex-1 px-4 pb-14">{children}</main>
+      {footer}
+      <HomeIndicator />
+    </WallScreen>
   );
 }
 

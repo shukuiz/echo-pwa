@@ -194,11 +194,12 @@ function Chat() {
 
   return (
     <PageShell
+      glass
       title="echo"
       sub={
         <button
           onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}
-          className="flex items-center gap-1.5 text-[12px] text-mute"
+          className="mute flex items-center gap-1.5 text-[12px]"
           role="switch"
           aria-checked={quiet}
           aria-label="安静思考"
@@ -240,7 +241,7 @@ function Chat() {
 
       <div className="space-y-1 pt-2">
         {messages.length === 0 && (
-          <p className="pt-20 text-center text-mute">和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
+          <p className="pt-20 text-center" data-onwp>和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
         )}
         {messages.map((m) => (
           <Bubble key={m.id} m={m} quiet={quiet} onTap={openMenu} onRetry={() => retry(m.id)} />
@@ -248,7 +249,7 @@ function Chat() {
         {working && (
           <div className="flex items-center gap-2 pt-2 animate-rise">
             <Avatar />
-            <div className="glass flex items-center gap-2 rounded-[22px] rounded-bl-md px-4 py-2.5 text-[15px] text-ink/80">
+            <div className="g bub flex items-center gap-2 rounded-[22px] rounded-bl-md px-4 py-2.5 text-[15px]" data-cssg>
               <span className="flex gap-1">
                 {[0, 1, 2].map((i) => (
                   <span key={i} className="h-1.5 w-1.5 animate-blink rounded-full bg-rose" style={{ animationDelay: `${i * 0.2}s` }} />
@@ -323,7 +324,7 @@ function Chat() {
 
       {/* 底栏：输入框 + 工具行 */}
       <div className="fixed inset-x-0 bottom-[calc(max(env(safe-area-inset-bottom),4px)+14px)] z-30 mx-auto w-full max-w-[430px] px-3">
-        <div className="rounded-[28px] bg-tile/95 px-3 pb-2.5 pt-2 shadow-soft backdrop-blur-xl">
+        <div className="g cbar px-3 pb-2.5 pt-2" data-cssg data-tint="0.08" style={{ "--r": "28px" } as React.CSSProperties}>
           <textarea
             ref={inputRef}
             value={input}
@@ -333,18 +334,18 @@ function Chat() {
             }}
             rows={1}
             placeholder={confirm ? "请先在上方确认…" : "跟 echo 说点什么…"}
-            className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-ink outline-none placeholder:text-mute"
+            className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
-            <button aria-label="附件" onClick={() => toast("附件先占位，P1 接上")} className="press grid h-9 w-9 shrink-0 place-items-center rounded-full bg-fog text-orb">
+            <button aria-label="附件" onClick={() => toast("附件先占位，P1 接上")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
               <IconClip size={18} />
             </button>
-            <button aria-label="语音" onClick={() => toast("语音先占位")} className="press grid h-9 w-9 shrink-0 place-items-center rounded-full bg-fog text-orb">
+            <button aria-label="语音" onClick={() => toast("语音先占位")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
               <IconMic size={18} />
             </button>
             <button
               onClick={() => setModelMenu((v) => !v)}
-              className="press flex h-9 min-w-0 flex-1 items-center justify-between gap-1 rounded-capsule border border-line bg-fog/60 px-3 font-mono text-[13px] text-ink/80"
+              className="chip press flex h-9 min-w-0 flex-1 items-center justify-between gap-1 rounded-capsule px-3 font-mono text-[13px]"
             >
               <span className="truncate">{settings.model}</span>
               <IconChevron size={14} className={`shrink-0 transition ${modelMenu ? "" : "rotate-180"}`} />
@@ -398,12 +399,12 @@ function ThinkLine({ think }: { think: Think }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-1.5 pl-10">
-      <div className="flex flex-wrap items-center gap-1.5 text-[12.5px] text-mute">
+      <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]" data-onwp>
         <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-1">
           <IconClock size={14} /> 思考过程 <IconChevron size={13} className={`transition ${open ? "" : "-rotate-90"}`} />
         </button>
         {think.tags.map((t, i) => (
-          <span key={i} className={`flex items-center gap-1 rounded-capsule px-2 py-0.5 ${t.kind === "memory" ? "bg-sakura/30 text-rose" : "glass text-ink/70"}`}>
+          <span key={i} className={`flex items-center gap-1 rounded-capsule px-2 py-0.5 [text-shadow:none] ${t.kind === "memory" ? "bg-sakura/60 text-rose" : "bg-white/50 text-[#3d393b]"}`}>
             {t.kind === "memory" ? <IconSpark size={12} /> : t.kind === "hand" ? <IconHand size={12} /> : <IconTool size={12} />}
             {t.label}
           </span>
@@ -438,8 +439,11 @@ function Bubble({ m, quiet, onTap, onRetry }: { m: Msg; quiet: boolean; onTap: (
       <div className={`max-w-[80%] ${m.card && m.status === "done" ? "w-[80%]" : ""}`}>
         <div
           onClick={(e) => onTap(e, m)}
-          className={`inline-block cursor-pointer whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition active:scale-[0.98] ${
-            mine ? "float-right rounded-[22px] rounded-br-md bg-sakura text-[#4a2630]" : "rounded-[22px] rounded-bl-md bg-tile text-ink shadow-soft"
+          data-cssg
+          data-hue={mine ? "me" : undefined}
+          data-tint={mine ? "0.22" : undefined}
+          className={`g bub inline-block cursor-pointer whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition active:scale-[0.98] ${
+            mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
           }`}
         >
           {m.text}
@@ -447,8 +451,8 @@ function Bubble({ m, quiet, onTap, onRetry }: { m: Msg; quiet: boolean; onTap: (
         </div>
         {mine && <div className="clear-both" />}
         {m.card && m.status === "done" && <ResultCard card={m.card} />}
-        {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px] text-mute">已停止生成</p>}
-        {m.status !== "streaming" && <p className={`mt-1 px-2 text-[11px] text-mute/80 ${mine ? "text-right" : ""}`}>{fmtTime(m.at)}</p>}
+        {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成</p>}
+        {m.status !== "streaming" && <p className={`mt-1 px-2 text-[11px] opacity-80 ${mine ? "text-right" : ""}`} data-onwp>{fmtTime(m.at)}</p>}
       </div>
     </div>
     </div>
