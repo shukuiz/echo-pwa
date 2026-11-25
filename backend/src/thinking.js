@@ -16,6 +16,7 @@ export const DEFAULT_COT_PROMPT = `回复之前，请先在 <think></think> 里�
 想好之后，在 </think> 后面写给她的回复。思考的内容她可以展开看，但不用在回复里再提一遍。`;
 
 export const DEFAULT_THINKING = Object.freeze({
+  nativeStyle: "给用户展示的思考说明请用简体中文，简短、自然。",
   mode: "off",
   format: "auto",
   effort: "medium",
@@ -44,6 +45,10 @@ export function normThinking(input, prev = DEFAULT_THINKING) {
   const base = { ...DEFAULT_THINKING, ...(isPlainObject(prev) ? prev : {}) };
   if (!isPlainObject(input)) return base;
   const next = { ...base };
+  if (input.nativeStyle !== undefined) {
+    if (typeof input.nativeStyle !== "string" || input.nativeStyle.length > 4000) throw new Error("风格偏好最多 4000 字");
+    next.nativeStyle = input.nativeStyle;
+  }
   if (input.mode !== undefined) {
     if (!THINK_MODES.includes(input.mode)) throw new Error("未知的思考模式");
     next.mode = input.mode;
@@ -122,7 +127,7 @@ export function planThinking(thinking, ctx) {
   if (t.mode === "native") {
     let extra = {};
     try { extra = parseExtra(t.extra); } catch {}
-    return { mode: t.mode, format, extras: deepMerge(nativeParams(format, t), extra), systemAppend: "" };
+    return { mode: t.mode, format, extras: deepMerge(nativeParams(format, t), extra), systemAppend: t.nativeStyle || "" };
   }
   if (t.mode === "cot") return { mode: t.mode, format, extras: {}, systemAppend: t.cotPrompt };
   return { mode: "off", format, extras: {}, systemAppend: "" };

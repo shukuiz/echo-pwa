@@ -14,10 +14,11 @@ type MemoryModelConfig = Record<MemoryModelKind, MemoryModelSettings>;
 export type ThinkMode = "off" | "native" | "cot";
 export type ThinkFormat = "auto" | "openai" | "anthropic" | "gemini" | "deepseek";
 export type ThinkEffort = "minimal" | "low" | "medium" | "high";
-export type ThinkingSettings = { mode: ThinkMode; format: ThinkFormat; effort: ThinkEffort; budget: number; extra: string; cotPrompt: string };
+export type ThinkingSettings = { nativeStyle?: string; mode: ThinkMode; format: ThinkFormat; effort: ThinkEffort; budget: number; extra: string; cotPrompt: string };
 export type ThinkingPlan = { mode: ThinkMode; format: Exclude<ThinkFormat, "auto">; extras: Record<string, unknown>; systemAppend: string; defaults: ThinkingSettings };
 
 export type EchoSettings = Omit<Settings, "apiKey"> & {
+  thoughtTranslationReady?: boolean;
   officialModels?: Record<string, string>;
   officialThinking?: Record<string, ThinkingSettings>;
   memoryOwner?: "echo" | "serein";
@@ -98,7 +99,7 @@ export interface ChatMsgInput {
 export async function chatStream(
   messages: ChatMsgInput[],
   opts: {
-    model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void;
+    model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void; onReasoningTranslated?: (text: string) => void;
     /** 后端的小提示：比如接口不认思考参数、已经去掉参数重试 */
     onNote?: (text: string) => void;
     /** 前端自己的消息 id：后端按这个存，之后删除 / 重新生成才对得上 */
@@ -122,6 +123,7 @@ export async function chatStream(
   const dispatch = (line: string) => {
     if (!line.trim()) return;
     const event = JSON.parse(line);
+    if (event.type === "reasoning_translated") opts.onReasoningTranslated?.(event.text);
     if (event.type === "reasoning") opts.onReasoning?.(event.text);
     if (event.type === "content") opts.onDelta(event.text);
     if (event.type === "note") opts.onNote?.(event.text);

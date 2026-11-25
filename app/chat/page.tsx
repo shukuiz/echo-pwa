@@ -156,6 +156,7 @@ function Chat() {
           if (first) { setWorking(null); first = false; }
           set("messages", (ms) => ms.map((m) => m.id === echoId ? { ...m, reasoning: (m.reasoning || "") + text } : m));
         },
+        onReasoningTranslated: (text) => patch(echoId, {reasoning: text}),
         onNote: (text) => patch(echoId, { note: text }),
         onDelta: (d) => {
           if (first) { setWorking(null); first = false; }

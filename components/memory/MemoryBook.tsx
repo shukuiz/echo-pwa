@@ -8,7 +8,7 @@ import { exportBackup, MemoryItem, useStore } from "@/lib/store";
 import ProjectInstructions from "./ProjectInstructions";
 import { api, type PreferenceInfo } from "@/lib/api";
 import {
-  createMemory, deleteMemory, KIND_META, KINDS, kindOf, MemoryDraft, MemoryKind, RecallOutcome, testRecall, updateMemory,
+  createMemory, deleteMemory, KIND_META, KINDS, kindOf, MemoryDraft, MemoryKind, updateMemory,
 } from "@/lib/memory";
 
 type Filter = MemoryKind | "all" | "archived";
@@ -45,9 +45,6 @@ export default function MemoryBook() {
   const [summary, setSummary] = useState<MemoryItem | null>(null);
   const [askDel, setAskDel] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [rq, setRq] = useState("");
-  const [recall, setRecall] = useState<RecallOutcome | null>(null);
-  const [recalling, setRecalling] = useState(false);
 
   const [connection, setConnection] = useState("正在读取记忆本…");
   const [refresh, setRefresh] = useState(0);
@@ -87,14 +84,6 @@ export default function MemoryBook() {
         || (sort === "important" ? (b.importance || 0) - (a.importance || 0) : 0)
         || b.updatedAt - a.updatedAt);
   }, [memory, filter, q, sort]);
-
-  async function runRecall() {
-    const query = rq.trim();
-    if (!query || recalling) return;
-    setRecalling(true);
-    setRecall(await testRecall(query, memory));
-    setRecalling(false);
-  }
 
   async function save() {
     if (!draft || !draft.text.trim() || busy) return;
@@ -172,32 +161,6 @@ export default function MemoryBook() {
           </button>
         ))}
       </div>
-
-      {/* 召回测试：和聊天时一样先向量筛选再重排，看看这句话会想起哪几条 */}
-      <section className="g card recall" data-cssg>
-        <h3><GIcon n="sparkle" s={16} />召回测试</h3>
-        <form className="rq" onSubmit={(e) => { e.preventDefault(); runRecall(); }}>
-          <input value={rq} onChange={(e) => setRq(e.target.value)} placeholder="比如：下雨天听什么歌" aria-label="召回测试的问题" enterKeyHint="search" />
-          <button type="submit" disabled={!rq.trim() || recalling}>{recalling ? "想…" : "试试"}</button>
-        </form>
-        {recall?.state === "unconfigured" && (
-          <p className="hint">Echo 的召回测试需要配置向量模型和重排模型。<br /><Link href="/settings#echo-memory-retrieval" className="lnk">打开 Echo 召回设置 ›</Link></p>
-        )}
-        {recall?.state === "error" && <p className="hint" role="alert">{recall.message}</p>}
-        {recall?.state === "ok" && (
-          <div className="hits">
-            {recall.mock && <p className="hint" style={{ marginTop: 0 }}>后端没连上，下面是本机按字面模拟的结果</p>}
-            {!recall.hits.length && <p className="hint">没有够相关的记忆，echo 这轮不会主动提起</p>}
-            {recall.hits.map((h) => (
-              <button key={h.id} className="hit" onClick={() => { const m = memory.find((x) => x.id === h.id); if (m) setDraft(toDraft(m)); }}>
-                <span className="score"><i style={{ width: `${Math.round(h.score * 100)}%` }} /><b>{h.score.toFixed(2)}</b></span>
-                <span className="ht"><span className={`kb k-${h.kind ?? "scene"}`}>{KIND_META[h.kind ?? "scene"].n}</span>{h.title}</span>
-                <small className="mute clamp2">{h.text}</small>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
 
       <div className="srt">
         <span className="mute">{list.length} 条</span>

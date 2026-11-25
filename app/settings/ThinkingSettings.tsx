@@ -111,6 +111,8 @@ export default function ThinkingSettingsSection({ config, targets, onSaved }: {
   return (
     <SettingsDrawer title="思考">
       <div className="space-y-4" data-testid="thinking-settings">
+        <p className="text-[13px] text-mute">{config.thoughtTranslationReady ? "英文思考自动翻译已配置" : "英文思考自动翻译尚未接通"}</p>
+        {draft.mode === "native" && <label className="block text-[13px] text-mute">原生思考说明的风格偏好<textarea className="field" maxLength={4000} value={draft.nativeStyle ?? ""} onChange={e=>up({nativeStyle:e.target.value})} placeholder="例如：用简短、自然的中文说明" /></label>}
         {targets.length > 1 && (
           <label htmlFor={ids.tgt} className="block space-y-1 text-[13px] text-mute">
             <span className="block">给哪个连接设置（每个连接各存一份）</span>

@@ -1,3 +1,4 @@
+import { translateThought } from "../translate-thought.js";
 // 聊天转发：拼 System Prompt + 最近 20 条消息，流式转发 OpenAI 兼容接口的正文和推理字段
 import { getConfig, authHeaders } from "../config.js";
 import { buildSystemPrompt } from "../prompt.js";
@@ -285,13 +286,24 @@ export default async function chatRoute(app) {
         writeDelta("note", note);
       }
     }
+    let reasoningOriginal;
+    if (reasoning && !stopped && !streamError && !interrupted) {
+      try {
+        const translated = await translateThought(reasoning);
+        if (translated) {
+          reasoningOriginal = reasoning;
+          reasoning = translated;
+          if (structured && !reply.raw.destroyed) writeDelta("reasoning_translated", translated);
+        }
+      } catch { /* Translation failures preserve the original thought. */ }
+    }
     // 落盘：先保存助手完整回复再结束响应，前端拿到「完成」后立刻删除 / 重新生成也对得上
     try {
       if (fullText || reasoning) {
         const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
         const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
         const id = replyId && !chat.messages.some((m) => m.id === replyId) ? replyId : uid();
-        chat.messages.push({ id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), ...(note ? { note } : {}), at: Date.now(), status });
+        chat.messages.push({ id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), ...(reasoningOriginal ? {reasoningOriginal} : {}), ...(note ? { note } : {}), at: Date.now(), status });
         await writeJSON(paths.chat(DATA_DIR), chat);
       }
     } catch {}

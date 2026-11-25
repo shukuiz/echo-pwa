@@ -1,10 +1,18 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.9.0";
+export const APP_VERSION = "0.9.1";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.9.1", date: "2026-11-25", title: "思考翻译与保持登录",
+    items: [
+      {t:"思考用中文看",d:"设置 → 思考 可保存原生思考的风格偏好。接通 Cloudflare 后，自动翻译思考框里的英文，译文会标记来源。"},
+      {t:"检索设置收在一处",d:"记忆检索统一在 Serein 配置，记忆本继续查看和编辑记忆。"},
+      {t:"记住这台设备",d:"Echo 登录保持 30 天，更新后端后也能继续使用。Serein 的保持登录需同步更新网关。"},
+    ],
+  },
   {
     version: "0.9.0",
     date: "2026-11-25",
