@@ -14,10 +14,11 @@ type MemoryModelConfig = Record<MemoryModelKind, MemoryModelSettings>;
 export type ThinkMode = "off" | "native" | "cot";
 export type ThinkFormat = "auto" | "openai" | "anthropic" | "gemini" | "deepseek";
 export type ThinkEffort = "minimal" | "low" | "medium" | "high";
-export type ThinkingSettings = { mode: ThinkMode; format: ThinkFormat; effort: ThinkEffort; budget: number; extra: string; cotPrompt: string };
+export type ThinkingSettings = { nativeStyle?: string; mode: ThinkMode; format: ThinkFormat; effort: ThinkEffort; budget: number; extra: string; cotPrompt: string };
 export type ThinkingPlan = { mode: ThinkMode; format: Exclude<ThinkFormat, "auto">; extras: Record<string, unknown>; systemAppend: string; defaults: ThinkingSettings };
 
 export type EchoSettings = Omit<Settings, "apiKey"> & {
+  thoughtTranslationReady?: boolean;
   officialModels?: Record<string, string>;
   officialThinking?: Record<string, ThinkingSettings>;
   memoryOwner?: "echo" | "serein";
@@ -76,6 +77,7 @@ export type PreferenceInfo = { subject: "user" | "ai" | "both"; polarity: "like"
 export type MemorySource = { type: "chat" | "manual" | "import"; messageIds: string[] };
 /** 记忆条目上可选的扩展字段（旧后端不认识也不会坏，只是不保存） */
 export type MemoryExtra = {
+  version?: number; shared?: boolean; readonly?: boolean; summaryEditable?: boolean; origin?: string;
   kind?: MemoryKind;
   cues?: string[];          // 召回线索，1–8 条，每条 ≤80 字（Serein write_scene 的 cues）
   domain?: string;          // 主域 / 分类
@@ -97,7 +99,7 @@ export interface ChatMsgInput {
 export async function chatStream(
   messages: ChatMsgInput[],
   opts: {
-    model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void;
+    model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void; onReasoningTranslated?: (text: string) => void;
     /** 后端的小提示：比如接口不认思考参数、已经去掉参数重试 */
     onNote?: (text: string) => void;
     /** 前端自己的消息 id：后端按这个存，之后删除 / 重新生成才对得上 */
@@ -121,6 +123,7 @@ export async function chatStream(
   const dispatch = (line: string) => {
     if (!line.trim()) return;
     const event = JSON.parse(line);
+    if (event.type === "reasoning_translated") opts.onReasoningTranslated?.(event.text);
     if (event.type === "reasoning") opts.onReasoning?.(event.text);
     if (event.type === "content") opts.onDelta(event.text);
     if (event.type === "note") opts.onNote?.(event.text);
@@ -194,12 +197,15 @@ export const api = {
     jsonFetch<{ models: string[] }>(`/api/settings/memory-models/${kind}/models`, { method: "POST", body: JSON.stringify(settings) }),
   testMemoryModel: (kind: MemoryModelKind) =>
     jsonFetch<{ ok: boolean; message: string }>(`/api/settings/memory-models/${kind}/test`, { method: "POST" }),
-  getMemory: () => jsonFetch<{ memory: any[]; reminders: any[] }>("/api/memory"),
+  saveSummary: (id:string,text:string,version:number) => jsonFetch(`/api/memory/${encodeURIComponent(id)}/summary`,{method:"PUT",body:JSON.stringify({text,version})}),
+  getProject: () => jsonFetch<{repo:string; branch:string; version:string; text:string; writable:boolean}>("/api/project/instructions", {cache:"no-store"}),
+  saveProject: (text:string,version:string) => jsonFetch<{version:string;commit:string}>("/api/project/instructions", {method:"PUT",body:JSON.stringify({text,version})}),
+  getMemory: () => jsonFetch<{ shared?: boolean; memory: any[]; reminders: any[] }>("/api/memory"),
   addMemory: (m: { tab?: string; title?: string; text: string; pinned?: boolean } & MemoryExtra) =>
     jsonFetch("/api/memory", { method: "POST", body: JSON.stringify(m) }),
   updateMemory: (id: string, patch: Record<string, unknown>) =>
     jsonFetch(`/api/memory/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
-  deleteMemory: (id: string) => jsonFetch(`/api/memory/${id}`, { method: "DELETE" }),
+  deleteMemory: (id: string, version?: number) => jsonFetch(`/api/memory/${encodeURIComponent(id)}?version=${version ?? ""}`, { method: "DELETE" }),
   /** 记忆召回测试：先向量筛选再重排；没配置模型时后端回 503 memory_recall_unconfigured */
   recallMemory: (query: string, limit = 5) =>
     jsonFetch<{ results: RecallHit[] }>("/api/memory/recall", { method: "POST", body: JSON.stringify({ query, limit }) }),

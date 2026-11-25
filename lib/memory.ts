@@ -50,9 +50,9 @@ export async function updateMemory(id: string, patch: Partial<MemoryDraft>): Pro
   }
 }
 
-export async function deleteMemory(id: string): Promise<"cloud" | "local"> {
+export async function deleteMemory(id: string, version?: number): Promise<"cloud" | "local"> {
   try {
-    await api.deleteMemory(id);
+    await api.deleteMemory(id, version);
     return "cloud";
   } catch (e) {
     if (ECHO_AUTH_ENABLED || !(offline(e) || id.startsWith("local-"))) throw e;

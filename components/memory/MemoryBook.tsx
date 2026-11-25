@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import GlassPage from "@/components/glass/GlassPage";
 import { GIcon } from "@/components/glass/Wall";
 import { exportBackup, MemoryItem, useStore } from "@/lib/store";
-import type { PreferenceInfo } from "@/lib/api";
+import ProjectInstructions from "./ProjectInstructions";
+import { api, type PreferenceInfo } from "@/lib/api";
 import {
-  createMemory, deleteMemory, KIND_META, KINDS, kindOf, MemoryDraft, MemoryKind, RecallOutcome, testRecall, updateMemory,
+  createMemory, deleteMemory, KIND_META, KINDS, kindOf, MemoryDraft, MemoryKind, updateMemory,
 } from "@/lib/memory";
 
 type Filter = MemoryKind | "all" | "archived";
@@ -22,7 +23,7 @@ const SUBJ: [PreferenceInfo["subject"], string][] = [["user", "我"], ["ai", "ec
 function toDraft(m?: MemoryItem, kind: MemoryKind = "scene"): Draft {
   const k = m ? kindOf(m) : kind;
   return {
-    id: m?.id, kind: k, title: m?.title ?? "", text: m?.text ?? "", pinned: m?.pinned ?? false,
+    id: m?.id, version:m?.version, kind: k, title: m?.title ?? "", text: m?.text ?? "", pinned: m?.pinned ?? false,
     cues: m?.cues ?? [], cueText: (m?.cues ?? []).join("，"), domain: m?.domain ?? "", importance: m?.importance ?? 3,
     status: m?.status ?? "active", favorite: m?.favorite ?? false, date: m?.date,
     preference: m?.preference ?? { subject: "user", polarity: "like", keywords: [], reason: "" },
@@ -41,11 +42,29 @@ export default function MemoryBook() {
   const [sort, setSort] = useState<Sort>("recent");
   const [q, setQ] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [summary, setSummary] = useState<MemoryItem | null>(null);
   const [askDel, setAskDel] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [rq, setRq] = useState("");
-  const [recall, setRecall] = useState<RecallOutcome | null>(null);
-  const [recalling, setRecalling] = useState(false);
+
+  const [connection, setConnection] = useState("正在读取记忆本…");
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    let active = true;
+    async function read() {
+      try {
+        const result = await api.getMemory();
+        if (!active) return;
+        if (result.shared) set("memory", result.memory);
+        setConnection(result.shared ? "已连接 Serein · 共用记忆库" : "当前使用 Echo 记忆库");
+      } catch { if (active) setConnection("未能刷新记忆本"); }
+    }
+    void read();
+    window.addEventListener("focus", read);
+    const timer = window.setInterval(() => {if (!document.hidden) void read();}, 30000);
+    return () => {active=false; clearInterval(timer); window.removeEventListener("focus",read);};
+  // Store actions act on the current state via functional updates.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: 0, archived: 0 };
@@ -66,14 +85,6 @@ export default function MemoryBook() {
         || b.updatedAt - a.updatedAt);
   }, [memory, filter, q, sort]);
 
-  async function runRecall() {
-    const query = rq.trim();
-    if (!query || recalling) return;
-    setRecalling(true);
-    setRecall(await testRecall(query, memory));
-    setRecalling(false);
-  }
-
   async function save() {
     if (!draft || !draft.text.trim() || busy) return;
     setBusy(true);
@@ -86,7 +97,7 @@ export default function MemoryBook() {
     try {
       if (draft.id) {
         const id = draft.id;
-        const mode = await updateMemory(id, body);
+        const mode = await updateMemory(id, { ...body, version:draft.version });
         set("memory", (ms) => ms.map((m) => (m.id === id ? { ...m, ...body, updatedAt: Date.now() } : m)));
         toast(mode === "local" ? "改好啦（本机）" : "改好啦 ✓");
       } else {
@@ -94,6 +105,7 @@ export default function MemoryBook() {
         set("memory", (ms) => [item, ...ms]);
         toast(mode === "local" ? "记下啦（本机）" : "记下啦 ✓");
       }
+      setRefresh(n=>n+1);
       setDraft(null);
     } catch (e) {
       toast((e as Error).message || "没保存上，再试一次？");
@@ -103,7 +115,7 @@ export default function MemoryBook() {
   async function quick(m: MemoryItem, patch: Partial<MemoryDraft>, msg: string) {
     const before = m;
     set("memory", (ms) => ms.map((x) => (x.id === m.id ? { ...x, ...patch } : x)));
-    try { await updateMemory(m.id, patch); toast(msg); }
+    try { await updateMemory(m.id, {...patch,version:m.version}); setRefresh(n=>n+1); toast(msg); }
     catch (e) { set("memory", (ms) => ms.map((x) => (x.id === m.id ? before : x))); toast((e as Error).message || "操作失败"); }
   }
 
@@ -112,8 +124,9 @@ export default function MemoryBook() {
     const id = draft.id;
     setAskDel(false);
     try {
-      await deleteMemory(id);
+      await deleteMemory(id, draft.version);
       set("memory", (ms) => ms.filter((m) => m.id !== id));
+      setRefresh(n=>n+1);
       setDraft(null);
       toast("已删除");
     } catch (e) { toast((e as Error).message || "删除失败"); }
@@ -133,6 +146,8 @@ export default function MemoryBook() {
         </span>
       }
     >
+      <ProjectInstructions />
+      <button className="chip" onClick={()=>setRefresh(n=>n+1)}>{connection} · 刷新</button>
       <label className="g card search" data-cssg>
         <GIcon n="search" s={18} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜标题、正文、线索、关键词…" aria-label="搜索记忆" enterKeyHint="search" />
@@ -146,32 +161,6 @@ export default function MemoryBook() {
           </button>
         ))}
       </div>
-
-      {/* 召回测试：和聊天时一样先向量筛选再重排，看看这句话会想起哪几条 */}
-      <section className="g card recall" data-cssg>
-        <h3><GIcon n="sparkle" s={16} />召回测试</h3>
-        <form className="rq" onSubmit={(e) => { e.preventDefault(); runRecall(); }}>
-          <input value={rq} onChange={(e) => setRq(e.target.value)} placeholder="比如：下雨天听什么歌" aria-label="召回测试的问题" enterKeyHint="search" />
-          <button type="submit" disabled={!rq.trim() || recalling}>{recalling ? "想…" : "试试"}</button>
-        </form>
-        {recall?.state === "unconfigured" && (
-          <p className="hint">Echo 的召回测试需要配置向量模型和重排模型。<br /><Link href="/settings#echo-memory-retrieval" className="lnk">打开 Echo 召回设置 ›</Link></p>
-        )}
-        {recall?.state === "error" && <p className="hint" role="alert">{recall.message}</p>}
-        {recall?.state === "ok" && (
-          <div className="hits">
-            {recall.mock && <p className="hint" style={{ marginTop: 0 }}>后端没连上，下面是本机按字面模拟的结果</p>}
-            {!recall.hits.length && <p className="hint">没有够相关的记忆，echo 这轮不会主动提起</p>}
-            {recall.hits.map((h) => (
-              <button key={h.id} className="hit" onClick={() => { const m = memory.find((x) => x.id === h.id); if (m) setDraft(toDraft(m)); }}>
-                <span className="score"><i style={{ width: `${Math.round(h.score * 100)}%` }} /><b>{h.score.toFixed(2)}</b></span>
-                <span className="ht"><span className={`kb k-${h.kind ?? "scene"}`}>{KIND_META[h.kind ?? "scene"].n}</span>{h.title}</span>
-                <small className="mute clamp2">{h.text}</small>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
 
       <div className="srt">
         <span className="mute">{list.length} 条</span>
@@ -194,7 +183,7 @@ export default function MemoryBook() {
         const k = kindOf(m);
         return (
           <article key={m.id} className={`g card mem ${m.status === "archived" ? "arch" : ""}`} data-cssg>
-            <button className="memmain" onClick={() => setDraft(toDraft(m))} aria-label={`编辑：${m.title}`}>
+            <button className="memmain" onClick={() => m.readonly ? setSummary(m) : setDraft(toDraft(m))} aria-label={`编辑：${m.title}`}>
               <div className="memtop">
                 <span className={`kb k-${k}`}>{KIND_META[k].n}</span>
                 {m.pinned && <span className="tag">置顶</span>}
@@ -213,20 +202,25 @@ export default function MemoryBook() {
               )}
               {!!m.cues?.length && <div className="cues">{m.cues.map((c) => <span key={c}>{c}</span>)}</div>}
               <small className="mute meta">
-                {m.date ? `${m.date} · ` : ""}{m.createdAt ? `创建 ${day(m.createdAt)} · ` : ""}更新 {day(m.updatedAt)}{m.source?.type === "chat" ? " · 来自聊天" : ""}
+                {m.date ? `${m.date} · ` : ""}{m.createdAt ? `创建 ${day(m.createdAt)} · ` : ""}更新 {day(m.updatedAt)}{m.shared && ` · 来源 ${m.origin}`}{m.source?.type === "chat" ? " · 来自聊天" : ""}
               </small>
             </button>
-            <div className="memacts">
+            {!m.readonly && <div className="memacts">
               <button aria-label={m.favorite ? "取消收藏" : "收藏"} className={m.favorite ? "on" : ""} onClick={() => quick(m, { favorite: !m.favorite }, m.favorite ? "取消收藏" : "收藏啦 ♡")}><GIcon n="heart" s={18} /></button>
               <button aria-label={m.pinned ? "取消置顶" : "置顶"} className={m.pinned ? "on" : ""} onClick={() => quick(m, { pinned: !m.pinned }, m.pinned ? "取消置顶" : "置顶啦")}><GIcon n="pin" s={18} /></button>
               <button aria-label={m.status === "archived" ? "取消归档" : "归档"} onClick={() => quick(m, { status: m.status === "archived" ? "active" : "archived" }, m.status === "archived" ? "放回来啦" : "归档啦，不会再被想起")}><GIcon n="archive" s={18} /></button>
-            </div>
+            </div>}
           </article>
         );
       })}
 
       <Link href="/reminders" className="g card linkcard" data-cssg><GIcon n="bell" s={18} />提醒挪到「记事提醒」里啦<span style={{ flex: 1 }} />›</Link>
 
+      {summary && <section className="g card"><h2>{summary.title}</h2>{summary.summaryEditable ? <><textarea aria-label="总结正文" rows={8} value={summary.text} onChange={e=>setSummary({...summary,text:e.target.value})} /><button disabled={busy} onClick={async()=>{
+        setBusy(true);
+        try {await api.saveSummary(summary.id,summary.text,summary.version!);setSummary(null);setRefresh(n=>n+1);toast("总结已保存到 Serein");}
+        catch(error){toast((error as Error).message);} finally {setBusy(false);}
+      }}>保存总结</button></> : <p style={{whiteSpace:"pre-wrap"}}>{summary.text}</p>}<button onClick={()=>setSummary(null)}>收起全文</button></section>}
       {d && (
         <>
           <div className="gmask" onClick={() => setDraft(null)} />

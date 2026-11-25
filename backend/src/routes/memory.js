@@ -1,3 +1,4 @@
+import { shared, sharedMemory } from "../shared-memory.js";
 // 记忆读写：结构化记忆(persona/text/summary) + 提醒，存后端 memory/store.json，实时持久化
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
 import { createMemoryRecall, MemoryRecallError } from "../memory-recall.js";
@@ -45,7 +46,12 @@ async function save(store) {
 }
 
 export default async function memoryRoute(app) {
-  const recall = createMemoryRecall(load);
+  if (shared) await sharedMemory("import", (await load()).memory || []);
+  async function current() {
+    const store = await load();
+    return shared ? { ...store, memory: await sharedMemory("list") } : store;
+  }
+  const recall = createMemoryRecall(current);
 
   app.post("/api/memory/recall", { bodyLimit: 8192 }, async (req, reply) => {
     reply.header("Cache-Control", "no-store");
@@ -64,8 +70,8 @@ export default async function memoryRoute(app) {
 
   // 读全部记忆 + 提醒
   app.get("/api/memory", async () => {
-    const store = await load();
-    return { memory: store.memory || [], reminders: store.reminders || [] };
+    const store = await current();
+    return { shared, memory: store.memory || [], reminders: store.reminders || [] };
   });
 
   // 新增记忆 { tab, title, text }
@@ -83,6 +89,7 @@ export default async function memoryRoute(app) {
       id: uid(), tab, kind: tabToKind(tab), title: String(title).trim() || text.trim().slice(0, 10), text: text.trim(), pinned: !!pinned,
       status: "active", createdAt: now, updatedAt: now, ...extra,
     };
+    if (shared) return sharedMemory("create", item);
     store.memory.unshift(item);
     await save(store);
     return item;
@@ -91,7 +98,7 @@ export default async function memoryRoute(app) {
   // 修改记忆（含置顶）{ title?, text?, pinned?, tab? }
   app.put("/api/memory/:id", async (req, reply) => {
     const store = await load();
-    const m = store.memory.find((x) => x.id === req.params.id);
+    const m = shared ? {} : store.memory.find((x) => x.id === req.params.id);
     if (!m) { reply.code(404); return { error: "not_found" }; }
     const body = req.body || {};
     const { title, text, pinned, tab } = body;
@@ -103,14 +110,22 @@ export default async function memoryRoute(app) {
     if (pinned !== undefined) m.pinned = !!pinned;
     if (tab !== undefined && TABS.includes(tab)) { m.tab = tab; m.kind = tabToKind(tab); }
     Object.assign(m, extraFields(body));
+    if (shared) return sharedMemory("update", { ...m, id: req.params.id, version: body.version });
     m.updatedAt = Date.now();
     await save(store);
     return m;
   });
 
+  app.put("/api/memory/:id/summary", async (req, reply) => {
+    const {text, version} = req.body || {};
+    if (!shared || typeof text !== "string" || !text.trim() || text.length > 20000 || !Number.isInteger(version))
+      return reply.code(400).send({message:"总结内容或版本无效"});
+    return sharedMemory("summary", {id:req.params.id, text, version});
+  });
   // 删除记忆
   app.delete("/api/memory/:id", async (req, reply) => {
     const store = await load();
+    if (shared) return sharedMemory("delete", {id: req.params.id, version: Number(req.query.version)});
     const before = store.memory.length;
     store.memory = store.memory.filter((x) => x.id !== req.params.id);
     if (store.memory.length === before) { reply.code(404); return { error: "not_found" }; }

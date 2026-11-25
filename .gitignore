@@ -5,3 +5,5 @@ tsconfig.tsbuildinfo
 .env
 .env.*
 !.env.example
+
+backend/data/auth-sessions.json*

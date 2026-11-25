@@ -324,6 +324,7 @@ export function publicConfig(raw) {
     officialThinking: Object.fromEntries(OFFICIAL_PROVIDERS.map((p) => [p, { ...DEFAULT_THINKING, ...(raw.officialThinking?.[p] || {}) }])),
     hasKey: !!up.apiKey,
     apiKeyMask: maskKey(up.apiKey),
+    thoughtTranslationReady: Boolean(process.env.ECHO_CF_ACCOUNT_ID && process.env.ECHO_CF_TRANSLATE_TOKEN),
     ...memoryManagement(up),
   };
 }

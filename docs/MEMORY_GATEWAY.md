@@ -47,3 +47,11 @@
 - 召回测试用 `mockRecall` 按字面重合打分，页面会标出「本机模拟」。
 
 登录模式下不会静默退回本机，失败会直接提示。
+
+## Echo 与 Serein 共用记忆库
+
+同机运行时，给 Echo 后端设置 `ECHO_SEREIN_DATABASE` 为 Serein 正在使用的 SQLite 记忆库绝对路径，`ECHO_SEREIN_PYTHON` 为能够导入该版本 serein 包的 Python 路径。请核对路径，使用 Serein 的数据库备份流程保存快照，再重启 Echo。首次启动把旧 Echo 条目导入为场景，按原条目 ID 去重，保留旧 JSON 和提醒。此适配器在 Serein 43dfa5b 上验证。保留生产站的 Echo 登录保护。
+
+记忆本打开、返回前台、手动刷新及在前台停留每 30 秒都会重新读取。修改采用 Serein 的版本和索引队列。页面的“已连接”表示数据库读通；向量索引完成时间取决于 Serein 的索引进程。事件修订沿用 Serein 的来源记录，叙事修订需保留来源引用。
+
+项目说明默认指向 shukuiz/echo-pwa 的 feat/echo-memory-rerank-api 分支。后端可用 ECHO_PROJECT_REPO 和 ECHO_PROJECT_BRANCH 选择目标。根目录 CLAUDE.md 导入 AGENTS.md。在启用 Echo 登录的后端配置仅对目标仓库拥有 Contents 读写权限的 ECHO_PROJECT_TOKEN 后，页面可以保存到该分支。GitHub 会检测文件版本冲突。客户端拉取该分支后，两种工具可读取同一份说明。
