@@ -79,6 +79,8 @@ export class CodexBridge extends EventEmitter {
     this.login = null;
     this.threadId = "";
     this.threadLoaded = false;
+    this.state = null;
+    this.writing = null;
   }
 
   childEnv() {
@@ -226,16 +228,23 @@ export class CodexBridge extends EventEmitter {
     t.done(result);
   }
 
+  /** 对话状态以内存为准，只在第一次用时读文件；写文件排队，避免旧的写入盖掉新的 */
   async loadState() {
-    const s = await readJSON(statePath(this.dataDir), {});
-    this.threadId = typeof s.threadId === "string" ? s.threadId : "";
-    return s;
+    if (!this.state) {
+      const s = await readJSON(statePath(this.dataDir), {});
+      this.state ||= s && typeof s === "object" ? s : {};
+      this.threadId = typeof this.state.threadId === "string" ? this.state.threadId : "";
+    }
+    return this.state;
   }
 
   async saveState(patch) {
-    const s = { ...(await readJSON(statePath(this.dataDir), {})), ...patch };
-    await writeJSON(statePath(this.dataDir), s);
-    return s;
+    await this.loadState();
+    this.state = { ...this.state, ...patch };
+    const snapshot = { ...this.state };
+    this.writing = (this.writing || Promise.resolve()).then(() => writeJSON(statePath(this.dataDir), snapshot), () => writeJSON(statePath(this.dataDir), snapshot));
+    await this.writing;
+    return snapshot;
   }
 
   async agentsHash() {
@@ -340,7 +349,7 @@ export class CodexBridge extends EventEmitter {
       });
       const turnId = res?.turn?.id || "";
       if (this.turn && !this.turn.turnId) this.turn.turnId = turnId;
-      if (turnId) await this.saveState({ lastTurnId: turnId });
+      if (turnId && this.threadId === threadId) await this.saveState({ lastTurnId: turnId });
     } catch (e) {
       this.#finishTurn({ status: "failed", error: e.message });
     }
@@ -364,7 +373,7 @@ export class CodexBridge extends EventEmitter {
   }
 
   async status() {
-    const state = await readJSON(statePath(this.dataDir), {});
+    const state = await this.loadState();
     const out = {
       installed: true, alive: false, loggedIn: false, account: null, busy: this.busy,
       hasThread: !!state.threadId, threadStartedAt: state.startedAt || 0,
