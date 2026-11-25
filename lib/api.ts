@@ -206,7 +206,7 @@ export const api = {
   // Codex（ChatGPT 订阅）
   codexStatus: () => jsonFetch<CodexStatus>("/api/codex/status", { cache: "no-store" }),
   codexModels: () => jsonFetch<{ models: CodexModel[] }>("/api/codex/models", { cache: "no-store" }),
-  codexResetThread: () => jsonFetch<{ ok: true }>("/api/codex/thread/reset", { method: "POST" }),
+  codexResetThread: () => jsonFetch<{ ok: true }>("/api/codex/thread/reset", { method: "POST", body: "{}" }),
   codexLogin: () => jsonFetch<{ loggedIn: boolean } & Partial<CodexLogin>>("/api/codex/login", { method: "POST" }),
   codexCancelLogin: () => jsonFetch<{ ok: true }>("/api/codex/login/cancel", { method: "POST" }),
 
