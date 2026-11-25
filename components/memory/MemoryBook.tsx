@@ -5,7 +5,6 @@ import Link from "next/link";
 import GlassPage from "@/components/glass/GlassPage";
 import { GIcon } from "@/components/glass/Wall";
 import { exportBackup, MemoryItem, useStore } from "@/lib/store";
-import ProjectInstructions from "./ProjectInstructions";
 import { api, type PreferenceInfo } from "@/lib/api";
 import {
   createMemory, deleteMemory, KIND_META, KINDS, kindOf, MemoryDraft, MemoryKind, updateMemory,
@@ -146,7 +145,6 @@ export default function MemoryBook() {
         </span>
       }
     >
-      <ProjectInstructions />
       <button className="chip" onClick={()=>setRefresh(n=>n+1)}>{connection} · 刷新</button>
       <label className="g card search" data-cssg>
         <GIcon n="search" s={18} />

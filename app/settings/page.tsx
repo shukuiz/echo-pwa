@@ -87,6 +87,16 @@ export default function SettingsPage() {
           </div>
         </SettingsDrawer>
 
+        <SettingsDrawer title="开发">
+          <Link href="/settings/code-rules" className="press flex min-h-14 items-center justify-between gap-3 rounded-[20px] px-1 py-2">
+            <span className="min-w-0">
+              <span className="block font-semibold">代码规矩</span>
+              <span className="block truncate text-[13px] text-mute">给写代码的 AI 看，不是 echo 人设（仓库 AGENTS.md）</span>
+            </span>
+            <IconChevron size={18} className="-rotate-90 shrink-0 text-mute" />
+          </Link>
+        </SettingsDrawer>
+
         <SettingsDrawer title="外观">
           <div className="space-y-3">
             <div>
