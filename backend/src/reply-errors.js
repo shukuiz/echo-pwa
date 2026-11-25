@@ -23,10 +23,10 @@ export function classifyReplyError(e = {}) {
   let message;
   if (e.timeout) {
     kind = "timeout";
-    const s = e.seconds ? `${e.seconds} 秒` : "";
+    const s = e.seconds ? ` ${e.seconds >= 60 && e.seconds % 60 === 0 ? e.seconds / 60 + " 分钟" : e.seconds + " 秒"} ` : "";
     message = e.timeout === "first" ? `等了${s}还没收到第一个字，先停下了` :
       e.timeout === "stall" ? `回复中途卡住超过${s}，先停下了，已经写出的字都留着` :
-        `这条回复写了太久（超过${s}），先停下了，已经写出的字都留着`;
+        `这条回复写了太久（超过${s.trimEnd()}），先停下了，已经写出的字都留着`;
   } else if (/codex_busy|上一条还在回复中/.test(raw) || status === 409 && /busy/i.test(raw)) {
     kind = "busy"; message = "上一条还在回复中，等它说完再发吧";
   } else if (status === 401 || status === 403 || /not logged in|unauthori[sz]ed|invalid api key|incorrect api key|authentication|登录过期|没登录|token.*(expired|revoked)/i.test(raw)) {
