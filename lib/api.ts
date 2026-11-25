@@ -36,15 +36,49 @@ export type EchoSettings = Omit<Settings, "apiKey"> & {
   officialModels?: Record<string, string>;
   officialThinking?: Record<string, ThinkingSettings>;
   memoryOwner?: "echo" | "serein";
+  timeouts?: ReplyTimeouts;
+  defaultTimeouts?: ReplyTimeouts;
   sereinSettingsUrl?: string;
 };
 type ChatModelDraft = { provider: string; presetId?: string; url?: string; apiKey?: string; anthropicWorkspaceId?: string };
 
 /** 带 HTTP 状态码的错误：记忆本要区分 503（还没配置）和别的失败；status 0 = 根本没连上后端 */
+export type ReplyErrorKind = "login" | "quota" | "network" | "param" | "timeout" | "busy" | "other";
+export type ReplyAction = "retry" | "settings" | "relogin" | "continue";
+export type GenSnapshot = {
+  genId: string; messageId: string; windowId?: string; via: "api" | "codex"; model: string;
+  status: "streaming" | "done" | "error" | "stopped"; text: string; reasoning: string; note: string;
+  errorKind?: ReplyErrorKind; errorMessage?: string; actions?: ReplyAction[];
+  startedAt: number; firstAt: number; lastAt: number; finishedAt: number;
+};
+// ---------- 换窗（后端 backend/src/windows.js，资料来自 Serein） ----------
+export type ResumeSelection = {
+  latest_shadow: boolean; recent_events: boolean; recent_event_limit: number; recent_scenes: boolean; recent_scene_limit: number;
+  favorite_scenes: boolean; recent_originals: boolean; recent_original_limit: number; pending_originals: boolean;
+  selected_memories: boolean; selected_ids: string[];
+};
+export type ShadowSections = { title?: string; user_view?: string; self_view?: string; recent_events?: string };
+export type ChatWindow = {
+  id: string; n: number; title: string; sereinWindowId: string; createdAt: number; archivedAt: number; messageCount: number;
+  via?: string; codexThreadId?: string; previousId?: string; hasContext?: boolean;
+  shadow?: { title: string; id?: string; revision?: number; sections?: ShadowSections; savedAt: number };
+  resume?: { pending: boolean; anchorText?: string; resumedAt?: number };
+};
+export type WindowList = { activeId: string; selection: ResumeSelection; windows: ChatWindow[]; mode: "resume" | "codex" | "prompt"; modeLabel: string; serein: boolean };
+export type LatestShadow = { windowId: string; title: string; revision: number; createdAt?: string; sections: ShadowSections; content: string; portraitViews: Record<string, { text: string; position: number; title: string }> } | null;
+export type ResumeItem = { id: string; kind: "shadow" | "event" | "scene" | "raw"; section: string; title: string; role?: string; createdAt?: string; body: string };
+export type ResumePreview = { selection: ResumeSelection; counts: Record<string, number>; totals: Record<string, number>; chars: number; items: ResumeItem[] };
+export type SwitchResult = { window: ChatWindow; previous: ChatWindow; shadow: { status: "saved" | "skipped" | "empty"; title?: string }; continuity: { mode: string; status: string; items: number } };
+export type ResumeCandidate = { id: string; kind: "event" | "scene"; title: string; body_md: string; date: string };
+
+export type ReplyTimeouts = { firstToken: number; codexFirstToken: number; stall: number; total: number };
+
 export class ApiError extends Error {
   status: number;
   code?: string;
   savedAt?: number;
+  kind?: ReplyErrorKind;
+  actions?: ReplyAction[];
   constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
@@ -77,6 +111,9 @@ async function requestError(res: Response) {
   const message = typeof data?.message === "string" && data.message;
   const err = new ApiError(message || `请求失败 (${res.status})`, res.status, typeof data?.error === "string" ? data.error : undefined);
   if (typeof data?.savedAt === "number") err.savedAt = data.savedAt; // 美化备份 409：云端那份的时间
+  if (typeof data?.kind === "string") err.kind = data.kind;
+  if (typeof data?.stage === "string") (err as ApiError & { stage?: string }).stage = data.stage;
+  if (Array.isArray(data?.actions)) err.actions = data.actions;
   return err;
 }
 
@@ -120,14 +157,22 @@ export async function chatStream(
     ids?: { user?: string; echo?: string };
     /** 重新生成本轮：用户消息已经在记录里，后端不再存一遍 */
     regenerate?: boolean;
+    /** 这次生成的请求 ID：断开连接后端也不取消，回来按它接上；只更新带这个 ID 的消息 */
+    genId?: string;
   }
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined }),
-    signal: opts.signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined, genId: opts.genId }),
+      signal: opts.signal,
+    });
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") throw e;
+    throw Object.assign(new ApiError("连不上 echo 后端", 0, "offline"), { kind: "network" as const, actions: ["retry"] as ReplyAction[] });
+  }
   if (!res.ok) throw await requestError(res);
   const reader = res.body?.getReader();
   if (!reader) throw new Error("无响应流");
@@ -141,9 +186,15 @@ export async function chatStream(
     if (event.type === "reasoning") opts.onReasoning?.(event.text);
     if (event.type === "content") opts.onDelta(event.text);
     if (event.type === "note") opts.onNote?.(event.text);
+    if (event.type === "error") throw Object.assign(new ApiError(event.text || "回复中途出错了", 502, "reply_error"), { kind: event.kind, actions: event.actions });
   };
   while (true) {
-    const { done, value } = await reader.read();
+    let done: boolean, value: Uint8Array | undefined;
+    try { ({ done, value } = await reader.read()); } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e;
+      // 流在中途断了（切后台、隧道断开）：后端可能还在写，交给调用方去按 genId 接上
+      throw Object.assign(new ApiError("连接断了一下", 0, "stream_lost"), { kind: "network" as const, actions: ["retry"] as ReplyAction[] });
+    }
     const chunk = done ? dec.decode() : dec.decode(value, { stream: true });
     if (structured) {
       buffer += chunk;
@@ -169,9 +220,23 @@ export const api = {
   // 聊天历史
   getHistory: () => jsonFetch<{ messages: any[] }>("/api/chat/history"),
   chatStream,
+  /** 进行中 / 刚结束的回复（回到聊天页时接上） */
+  chatActive: () => jsonFetch<{ generations: GenSnapshot[] }>("/api/chat/active", { cache: "no-store" }),
+  chatGeneration: (genId: string) => jsonFetch<GenSnapshot>(`/api/chat/generations/${encodeURIComponent(genId)}`, { cache: "no-store" }),
+  /** 「停止」：真正让后端取消这次生成 */
+  chatStop: (genId: string) => jsonFetch<{ ok: true; stopped: boolean }>("/api/chat/stop", { method: "POST", body: JSON.stringify({ genId }) }),
   /** 批量删除聊天记录（多选删除、重新生成前删旧回复） */
   deleteMessages: (ids: string[]) =>
     jsonFetch<{ ok: true; deleted: number }>("/api/chat/messages", { method: "DELETE", body: JSON.stringify({ ids }) }),
+
+  // 换窗 / 历史窗口
+  getWindows: () => jsonFetch<WindowList>("/api/windows", { cache: "no-store" }),
+  getWindow: (id: string) => jsonFetch<{ window: ChatWindow; active: boolean; readOnly: boolean; messages: any[] }>(`/api/windows/${encodeURIComponent(id)}`, { cache: "no-store" }),
+  latestShadow: () => jsonFetch<{ shadow: LatestShadow }>("/api/windows/shadow/latest", { cache: "no-store" }),
+  previewResume: (selection: ResumeSelection) => jsonFetch<ResumePreview>("/api/windows/preview", { method: "POST", body: JSON.stringify({ selection }) }),
+  resumeCandidates: (q: string, kind = "") => jsonFetch<{ items: ResumeCandidate[]; total: number }>(`/api/windows/candidates?q=${encodeURIComponent(q)}&kind=${kind}`, { cache: "no-store" }),
+  switchWindow: (body: { selection: ResumeSelection; skipShadow?: boolean; skipContinuity?: boolean }) =>
+    jsonFetch<SwitchResult>("/api/windows/switch", { method: "POST", body: JSON.stringify(body) }),
 
   // 收藏本
   getFavorites: () => jsonFetch<{ favorites: Favorite[] }>("/api/favorites", { cache: "no-store" }),

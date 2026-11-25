@@ -139,3 +139,12 @@ NEXT_PUBLIC_ECHO_API=http://<altare-ip>:8787
 3. Serein 记忆（可选）：`codex mcp add serein --url http://127.0.0.1:18217/serein/mcp --bearer-token-env-var SEREIN_MCP_TOKEN`，并在 `~/.codex/config.toml` 的 `[mcp_servers.serein]` 里加 `default_tools_approval_mode = "approve"`。在后端 `.env` 里设 `ECHO_CODEX_SEREIN_TOKEN_FILE=/root/companion/serein/deploy/secrets/api-token`，后端启动 Codex 时从这个文件读 Gateway Key 放进 `SEREIN_MCP_TOKEN`，Key 不写进 config.toml。
 
 可选环境变量：`ECHO_CODEX_BIN`（codex 路径，默认 `codex`）、`ECHO_CODEX_ARGS`（附加给 `codex app-server` 的参数，空格分隔，例如 `--disable apps`）、`CODEX_HOME`。
+
+## 换窗（v0.11.0）
+
+- 「窗口」= 一段连续的对话。当前窗口在 `data/memory/chat.json`（带 `windowId`），登记表在 `data/memory/windows/index.json`，归档的旧窗口在 `data/memory/windows/<id>.json`（只读）。第一次启动新版时，现有聊天自动成为「第 1 窗」，Serein 窗口 ID 沿用 `main`，不搬动文件。
+- 换窗用 Serein 自己的功能，需要在 Serein「设置 → 功能」打开 **窗影**、**开窗续接**，并打开 `/resume` 命令（MCP `resume` 可选）。后端访问 Serein 记忆核心：
+  - `ECHO_SEREIN_CORE_URL`（默认 `http://127.0.0.1:18218`）
+  - `ECHO_SEREIN_TOKEN_FILE`（默认用 `ECHO_CODEX_SEREIN_TOKEN_FILE`，即 Serein 的 Gateway Key 文件）
+  - `ECHO_SEREIN_GATEWAY_URL`（默认 `http://127.0.0.1:18217/v1`）：聊天连接地址等于它（或 `ECHO_SEREIN_API_BASE`）时，按 Serein 网关处理：带 `X-Serein-Window-ID`，新窗口第一条带 `/resume`。
+- 回复等待：`settings.timeouts = { firstToken, codexFirstToken, stall, total }`（秒），设置 → 回复等待 里改。

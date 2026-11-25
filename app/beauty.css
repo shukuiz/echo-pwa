@@ -39,9 +39,13 @@ html.wall-on #g-wall, html.wall-gl #g-canvas { display: block; }
 .bty .g { position: relative; border-radius: var(--r, 24px); text-shadow: var(--g-tsh); color: var(--g-ink); }
 /* 液态玻璃：光学交给 WebGL；无 WebGL / 减弱动态 / 超出上限时用 CSS 毛玻璃 */
 html.th-glass.nog .bty .g, html.th-glass .bty .g[data-cssg] {
-  background: rgba(var(--g-tint), calc((.16 + var(--g-amt) * .9) * var(--wa, 1)));
-  backdrop-filter: blur(var(--g-fallback-blur)) saturate(1.18); -webkit-backdrop-filter: blur(var(--g-fallback-blur)) saturate(1.18);
-  box-shadow: inset 1px 1px 0 rgba(255,255,255,.5), inset -1px -1px 0 rgba(255,255,255,.14);
+  /* CSS 回退也要清楚：模糊更轻、对比稍高，再补一圈左上亮 / 右下暗的边缘高光，像玻璃的厚度 */
+  background:
+    linear-gradient(145deg, rgba(255,255,255,calc(.16 * var(--wa, 1))) 0%, rgba(255,255,255,0) 42%, rgba(255,255,255,0) 70%, rgba(255,255,255,calc(.07 * var(--wa, 1))) 100%),
+    rgba(var(--g-tint), calc((.15 + var(--g-amt) * .9) * var(--wa, 1)));
+  backdrop-filter: blur(var(--g-fallback-blur)) saturate(1.3) contrast(1.04); -webkit-backdrop-filter: blur(var(--g-fallback-blur)) saturate(1.3) contrast(1.04);
+  box-shadow: inset 1.2px 1.2px 0 rgba(255,255,255,.62), inset -1px -1px 0 rgba(255,255,255,.2), inset 0 0 0 .5px rgba(255,255,255,.28),
+    0 8px 22px -14px rgba(18,28,45,.42);
 }
 /* 仿真：大圆角、柔阴影、磨砂或实色 */
 html.th-real .bty .g {
@@ -466,3 +470,78 @@ html.dark .unotes { background: rgba(36,38,46,.9); color: #eef1f6; }
 html.dark .ulist li { background: rgba(255,255,255,.07); } html.dark .ulist b { color: #eef1f6; } html.dark .ulist span, html.dark .uold { color: #b9c0cc; }
 html.dark .ulead { color: var(--hl-text-l); }
 .ubtn:focus:not(:focus-visible) { outline: none; }
+
+/* ---------- 设置 → 开发 → 代码规矩 ---------- */
+.coderules-note { --r: 24px; padding: 14px 16px; }
+.coderules-note p { margin: 0 0 6px; font-size: 13px; line-height: 1.7; }
+.coderules-note p:last-child { margin-bottom: 0; }
+.coderules-note .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; opacity: .82; word-break: break-all; }
+.coderules-edit { --r: 24px; display: block; padding: 6px; }
+.coderules-edit textarea { display: block; width: 100%; min-height: 52dvh; resize: vertical; border: 0; outline: none; border-radius: 18px;
+  padding: 12px 14px; background: rgba(255,255,255,.1); color: var(--g-ink); text-shadow: none;
+  font: 14px/1.65 ui-monospace, "SF Mono", Menlo, monospace; -webkit-user-select: text; user-select: text; }
+.coderules-edit textarea:focus { background: rgba(255,255,255,.16); box-shadow: inset 0 0 0 1px rgba(255,255,255,.35); }
+
+/* 液态玻璃退到省电时的轻提示 */
+.glass-note { position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 58px); transform: translateX(-50%); z-index: 80;
+  width: min(360px, calc(100vw - 32px)); min-height: 44px; padding: 10px 16px; border: 0; border-radius: 22px; cursor: pointer;
+  background: rgba(38,48,61,.82); color: #fff; font-size: 13px; line-height: 1.55; text-align: left;
+  backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: 0 10px 28px -12px rgba(18,28,45,.55), inset 0 0 0 .5px rgba(255,255,255,.25); animation: pop .25s ease-out; }
+
+/* ---------- 聊天：回复出错卡片（说人话 + 能做的事） ---------- */
+.reply-err { --r: 20px; padding: 10px 14px 12px; max-width: min(78vw, 330px); border-radius: 20px 20px 20px 8px; }
+.reply-err .t { font-size: 15px; font-weight: 600; }
+.reply-err .d { margin-top: 2px; font-size: 13px; line-height: 1.6; word-break: break-word; }
+.reply-err .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.reply-err .acts button { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px;
+  background: var(--g-chip); color: inherit; font-size: 14px; cursor: pointer; text-shadow: none; }
+.reply-err .acts button.on { background: var(--hl); color: var(--hl-ink); }
+.reply-err .acts button:disabled { opacity: .45; }
+
+/* ---------- 换窗 / 历史窗口 ---------- */
+.winpage .card h3 { font-size: 14px; }
+.win-lead .poem { font-size: 15px; line-height: 1.85; letter-spacing: .02em; }
+.win-lead .meta { margin-top: 8px; font-size: 12px; color: var(--g-mute); }
+.winpage .warn { margin-top: 8px; font-size: 13px; color: var(--g-rose); font-weight: 600; }
+.winpage .shadow .st { display: block; font-size: 17px; margin-bottom: 6px; letter-spacing: .03em; }
+.winpage .shadow details { border-top: 1px solid rgba(255,255,255,.18); padding: 4px 0; }
+.winpage .shadow summary { min-height: 44px; display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; font-size: 14.5px; list-style: none; }
+.winpage .shadow summary::-webkit-details-marker { display: none; }
+.winpage .shadow summary small { font-weight: 400; font-size: 12px; color: var(--g-mute); }
+.winpage .shadow p { white-space: pre-wrap; font-size: 14px; line-height: 1.8; padding-bottom: 8px; -webkit-user-select: text; user-select: text; }
+.winpage .wrow { min-height: 52px; margin-top: 4px; }
+.winpage .wrow > span, .winpage .wrow .btgl > span { display: flex; flex-direction: column; gap: 2px; font-size: 15px; }
+.winpage .btgl small, .winpage .wrow small { font-size: 12px; color: var(--g-mute); line-height: 1.45; }
+.winpage .btgl { min-height: 44px; }
+.winpage .counted { display: flex; flex-direction: column; }
+.winpage .stepper { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; }
+.winpage .stepper button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--g-chip); color: inherit; font-size: 20px; cursor: pointer; text-shadow: none; }
+.winpage .stepper button:disabled { opacity: .4; }
+.winpage .stepper input { width: 64px; height: 44px; border-radius: 14px; border: 0; text-align: center; font-size: 16px; background: rgba(255,255,255,.18); color: inherit; outline: none; -webkit-user-select: text; user-select: text; }
+.winpage .wbtn { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; margin-top: 10px; border: 0; border-radius: 999px; font-size: 14.5px; cursor: pointer; }
+.winpage .pv { border-top: 1px solid rgba(255,255,255,.18); }
+.winpage .pv summary { min-height: 44px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; font-weight: 600; font-size: 14.5px; list-style: none; }
+.winpage .pv summary::-webkit-details-marker { display: none; }
+.winpage .pv summary span { font-size: 13px; color: var(--g-mute); font-weight: 400; }
+.winpage .pvi { padding: 6px 0 10px; } .winpage .pvi b { font-size: 13.5px; display: block; }
+.winpage .pvi p { font-size: 13px; line-height: 1.7; color: var(--g-mute); white-space: pre-wrap; word-break: break-word; }
+.win-go .win-btn { width: 100%; min-height: 50px; margin-top: 12px; border: 0; border-radius: 999px; cursor: pointer; font-size: 16px; font-weight: 600; letter-spacing: .06em;
+  background: var(--hl); color: var(--hl-ink); box-shadow: 0 10px 24px -12px var(--hl-glow), inset 0 1px 0 rgba(255,255,255,.35); text-shadow: none; }
+.win-go .win-btn:disabled { opacity: .5; }
+.winpage .wcard { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; border: 0; cursor: pointer; color: inherit; min-height: 44px; font: inherit; }
+.winpage .wcard .wh { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .winpage .wcard .wh b { font-size: 17px; letter-spacing: .03em; }
+.winpage .wcard .tag { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--g-chip); text-shadow: none; }
+.winpage .wcard .tag.on { background: var(--hl); color: var(--hl-ink); }
+.winpage .wcard .wm { font-size: 12.5px; color: var(--g-mute); } .winpage .wcard .ws { font-size: 13.5px; } .winpage .wcard .dim2 { color: var(--g-mute); }
+.winpage .wlog { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
+.winpage .wmsg { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; } .winpage .wmsg.me { align-items: flex-end; }
+.winpage .wmsg .bub { --r: 20px; max-width: 82%; padding: 9px 14px; font-size: 15px; line-height: 22px; white-space: pre-wrap; word-break: break-word; -webkit-user-select: text; user-select: text; }
+.winpage .wmsg .bub.ai { border-bottom-left-radius: 7px; } .winpage .wmsg .bub.me { border-bottom-right-radius: 7px; }
+.winpage .wmsg small { font-size: 11px; padding: 0 6px; opacity: .8; }
+.gsheet .pickr { width: 100%; border: 0; text-align: left; cursor: pointer; min-height: 52px; font: inherit; color: inherit; }
+.gsheet .pickr.on { box-shadow: inset 0 0 0 2px var(--hl); }
+.gsheet .pickr .ck { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #eef1f5; color: var(--hl-deep); font-weight: 700; }
+.chat-shell .winbtn { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: 999px; font-size: 14px; flex-shrink: 0; }
+.winpage .stepper input { -moz-appearance: textfield; appearance: textfield; }
+.winpage .stepper input::-webkit-outer-spin-button, .winpage .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }

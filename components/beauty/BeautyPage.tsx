@@ -7,7 +7,14 @@ import { useRouter } from "next/navigation";
 import { Beauty, DEFAULT_ACCENT, FCOLS, ICOLS, MES, PRESETS, SLIDERS, TINTS, useBeauty } from "@/lib/beauty";
 import { useStore } from "@/lib/store";
 import { delBlob, downscale, putBlob, useBlobUrl } from "@/lib/idb";
-import { engine } from "@/components/glass/engine";
+import { engine, isIOSDevice, resolveQuality, type GlassQuality } from "@/components/glass/engine";
+
+const QUALITY_HINT: Record<GlassQuality, string> = {
+  hd: "高清：2 倍像素，水波最顺，最费电。",
+  balanced: "均衡：1.5 倍像素，只在滑动和变化时重画，键盘弹出时先换成毛玻璃。",
+  css: "省电：只用 CSS 毛玻璃和边缘高光，不跑 WebGL。",
+};
+const QUALITY_NAME: Record<GlassQuality, string> = { hd: "高清", balanced: "均衡", css: "省电" };
 import { useGlassRect } from "@/components/glass/hooks";
 import { GIcon, WallScreen } from "@/components/glass/Wall";
 import { DEFAULT_WP } from "@/components/glass/GlassRoot";
@@ -159,7 +166,7 @@ export default function BeautyPage() {
     if (thenLeave && r.local) { setLeaving(false); goBack(); }
   }
   const userWp = useBlobUrl("wp:user");
-  const rm = engine.rm, noGL = engine.noGL;
+  const rm = engine.rm, noGL = engine.noGL, quality = resolveQuality(b.quality);
   const glass = b.theme === "glass";
 
   const P = (k: keyof Beauty["P"], v: number) => upd((p) => ({ P: { ...p.P, [k]: v }, preset: null }), "card");
@@ -260,15 +267,24 @@ export default function BeautyPage() {
 
         {glass && (
           <Group id="glass" icon="drop" title="玻璃参数" open={open.has("glass")} onToggle={toggle}
-            summary={`${presetName} · ${b.motion ? "水波" : "静止"}`}>
+            summary={`${presetName} · ${QUALITY_NAME[quality]} · ${b.motion ? "水波" : "静止"}`}>
             <Seg label="玻璃预设" value={b.preset} opts={[["mist", "雾窗"], ["clear", "清透"], ["frost", "磨砂"]]} onChange={(v) => upd({ preset: v, P: { ...PRESETS[v] } }, "card")} />
             <div style={{ marginTop: 8 }}>
               {SLIDERS.map(([k, l, max]) => <Slider key={k} label={l} value={b.P[k]} max={max} onChange={(v) => P(k, v)} />)}
             </div>
+            <div className="sub">玻璃画质</div>
+            <Seg label="玻璃画质" value={quality} opts={[["hd", "高清"], ["balanced", "均衡"], ["css", "省电"]]}
+              onChange={(v) => { upd({ quality: v }, "card"); engine.resetGuard(); }} />
+            <p className="hint">{QUALITY_HINT[quality]}{b.quality === "auto" ? (isIOSDevice() ? "（iPhone 默认均衡）" : "（默认高清）") : ""}</p>
             <div className="sub">动效</div>
             <Seg label="动效" value={b.motion} opts={[[1, "水波流动"], [0, "静止省电"]]} onChange={(v) => upd({ motion: v as 0 | 1 }, "card")} />
             <p className="hint">
-              {rm ? "系统开了「减弱动态效果」，所以现在用的是普通毛玻璃，不跑水波。" : noGL ? "当前设备使用低开销的毛玻璃和高光效果。" : "设备不支持 WebGL 时，自动换成普通毛玻璃，不影响阅读"}
+              {rm ? "系统开了「减弱动态效果」，所以现在用的是普通毛玻璃，不跑水波。"
+                : engine.fallbackReason === "locked" ? "液态玻璃连着两次让 App 退出，现在保持省电玻璃；在上面重新选一次画质就会再试。"
+                : engine.fallbackReason === "crashed" ? "上次液态玻璃好像让 App 退出了，这次先用省电玻璃，下次打开会再试。"
+                : engine.fallbackReason === "lost" ? "液态玻璃刚才停了一下，这次先用省电玻璃。"
+                : quality === "css" ? "省电模式不跑水波。"
+                : noGL ? "这台设备暂时开不了 WebGL，先用毛玻璃和边缘高光。" : quality === "balanced" ? "均衡档水波 30 帧，只在滑动和变化时重画。" : "设备不支持 WebGL 时，自动换成普通毛玻璃，不影响阅读"}
             </p>
           </Group>
         )}

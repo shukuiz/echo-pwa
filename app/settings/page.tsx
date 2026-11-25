@@ -6,6 +6,7 @@ import { Hand, useStore } from "@/lib/store";
 import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
 import { DEFAULT_ACCENT, useBeauty } from "@/lib/beauty";
 import ChatConnectionSettings from "./ChatConnectionSettings";
+import ReplyTimeoutSettings from "./ReplyTimeoutSettings";
 import { openUpdateNotes } from "@/components/UpdateNotes";
 import Link from "next/link";
 import { APP_VERSION } from "@/lib/version";
@@ -46,6 +47,8 @@ export default function SettingsPage() {
           <IconChevron size={18} className="-rotate-90 shrink-0 text-mute" />
         </Link>
 
+        <ReplyTimeoutSettings />
+
         <SettingsDrawer title="动手入口">
           <div className="divide-y divide-line">
             <Row icon={<IconCode size={20} />} title="Codex" sub={settings.codexEnabled ? "已启用" : "已关闭"}>
@@ -85,6 +88,16 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+        </SettingsDrawer>
+
+        <SettingsDrawer title="开发">
+          <Link href="/settings/code-rules" className="press flex min-h-14 items-center justify-between gap-3 rounded-[20px] px-1 py-2">
+            <span className="min-w-0">
+              <span className="block font-semibold">代码规矩</span>
+              <span className="block truncate text-[13px] text-mute">给写代码的 AI 看，不是 echo 人设（仓库 AGENTS.md）</span>
+            </span>
+            <IconChevron size={18} className="-rotate-90 shrink-0 text-mute" />
+          </Link>
         </SettingsDrawer>
 
         <SettingsDrawer title="外观">

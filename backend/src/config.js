@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { paths, readJSON, writeJSON, DATA_DIR } from "./storage.js";
 import { DEFAULT_THINKING, normThinking } from "./thinking.js";
 import { DEFAULT_CODEX, normCodex } from "./codex.js";
+import { DEFAULT_TIMEOUTS, normTimeouts } from "./timeouts.js";
 
 // 官方接口地址：官方 API 模式下固定使用，不需要用户填写
 // Anthropic 走官方 OpenAI 兼容层（https://api.anthropic.com/v1/），复用同一套 /chat/completions 转发
@@ -17,6 +18,7 @@ const MAX_PRESETS = 20;
 const DEFAULT_CONFIG = {
   apiMode: "official", // official | custom | codex（ChatGPT 订阅，走服务器上的 codex app-server）
   codex: { ...DEFAULT_CODEX }, // Codex 连接：{ model, effort, showThinking }
+  timeouts: { ...DEFAULT_TIMEOUTS }, // 回复等待（秒）：{ firstToken, codexFirstToken, stall, total }
   provider: "openai", // 官方模式下的厂商：openai | deepseek | anthropic
   officialKeys: {}, // { openai: "sk-…", deepseek: "…", anthropic: "…" } 各官方 Key 分开保存，切换不丢
   officialModels: {},
@@ -66,7 +68,7 @@ function migrate(raw) {
 export async function getRawConfig() {
   const raw = await readJSON(paths.config(DATA_DIR), {});
   const stored = migrate(raw);
-  return { ...DEFAULT_CONFIG, ...stored, officialKeys: { ...stored.officialKeys }, officialModels: { ...stored.officialModels }, officialThinking: { ...stored.officialThinking }, presets: stored.presets || [], codex: normCodex(stored.codex) };
+  return { ...DEFAULT_CONFIG, ...stored, officialKeys: { ...stored.officialKeys }, officialModels: { ...stored.officialModels }, officialThinking: { ...stored.officialThinking }, presets: stored.presets || [], codex: normCodex(stored.codex), timeouts: normTimeouts(stored.timeouts, undefined, { lenient: true }) };
 }
 
 /** 当前生效的上游：官方厂商或选中的自定义预设 */
@@ -138,6 +140,7 @@ export async function applySettingsPatch(body) {
 
     if (body.apiMode === "official" || body.apiMode === "custom" || body.apiMode === "codex") next.apiMode = body.apiMode;
     if (body.codex !== undefined) next.codex = normCodex(body.codex, next.codex);
+    if (body.timeouts !== undefined) next.timeouts = normTimeouts(body.timeouts, next.timeouts);
     if (OFFICIAL_PROVIDERS.includes(body.provider)) next.provider = body.provider;
     if (typeof body.activePresetId === "string") {
       if (body.activePresetId && !next.presets.some((p) => p.id === body.activePresetId)) throw new Error("连接不存在");
@@ -331,6 +334,8 @@ export function publicConfig(raw) {
     })),
     officialThinking: Object.fromEntries(OFFICIAL_PROVIDERS.map((p) => [p, { ...DEFAULT_THINKING, ...(raw.officialThinking?.[p] || {}) }])),
     codex,
+    timeouts: normTimeouts(raw.timeouts, undefined, { lenient: true }),
+    defaultTimeouts: DEFAULT_TIMEOUTS,
     hasKey: up.kind === "codex" || !!up.apiKey,
     apiKeyMask: maskKey(up.apiKey),
     thoughtTranslationReady: Boolean(process.env.ECHO_CF_ACCOUNT_ID && process.env.ECHO_CF_TRANSLATE_TOKEN),

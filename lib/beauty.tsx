@@ -48,6 +48,8 @@ export type Beauty = {
   wA: number;
   P: GlassParams;
   motion: 0 | 1;
+  /** 玻璃画质：auto = iPhone 均衡、其它高清；css = 省电（只用 CSS 毛玻璃） */
+  quality: "auto" | "hd" | "balanced" | "css";
   wp: "default" | "user";
   inkMode: "auto" | "custom";
   inkColor: string;
@@ -128,7 +130,7 @@ export const DEFAULT_ACCENT = "#b4637a";
 
 export const defaultBeauty = (): Beauty => ({
   v: 1, theme: "glass", accent: DEFAULT_ACCENT, mat: "frost", tint: "#f3f6fa", me: "#ffb6c8", bubMode: "glass", font: "sys", songOrig: false,
-  preset: "mist", icon: "#f7f8fb", iconA: 88, wA: 100, P: { ...PRESETS.mist }, motion: reducedMotion() ? 0 : 1, wp: "default",
+  preset: "mist", icon: "#f7f8fb", iconA: 88, wA: 100, P: { ...PRESETS.mist }, motion: reducedMotion() ? 0 : 1, quality: "auto", wp: "default",
   inkMode: "auto", inkColor: "#ffffff", meInkMode: "follow", meInkColor: "#3a2630",
   items: seedItems(), removed: [], savedAt: 0,
 });
@@ -195,6 +197,7 @@ export function migrateBeauty(raw: unknown): Beauty {
       edge: num(P.edge, 0, 40, d.P.edge), shine: num(P.shine, 0, 40, d.P.shine), wobble: num(P.wobble, 0, 40, d.P.wobble),
     },
     motion: r.motion === 0 ? 0 : r.motion === 1 ? 1 : d.motion,
+    quality: oneOf(r.quality, ["auto", "hd", "balanced", "css"] as const, "auto"),
     wp: oneOf(r.wp, ["default", "user"] as const, "default"),
     inkMode: oneOf(r.inkMode, ["auto", "custom"] as const, "auto"),
     inkColor: isHex(r.inkColor) ? r.inkColor : d.inkColor,

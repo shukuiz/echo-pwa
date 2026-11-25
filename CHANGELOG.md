@@ -3,6 +3,21 @@
 App 里的「更新公告」（设置 → 关于 → 更新公告）和这里是同一份内容，来源 `lib/version.ts`。
 每次给 App 推一次完整更新：在 `lib/version.ts` 加一段、把 `APP_VERSION` 和 `public/sw.js` 的缓存名一起升级。
 
+## v0.11.0 · 2026-11-25
+
+换窗，和不会断的回复 ✿
+
+1. **换窗**（更新点 4）
+   聊天页右上角「换窗」：当前主模型先写窗影（我眼中的你 / 我眼中的自己 / 这一窗发生的事，存进 Serein，和 MCP `window_shadow_write` 同一个功能），旧窗口归档进「历史窗口」只读保存，新窗口带新的 `X-Serein-Window-ID`。连续性：Serein 网关下新窗口第一条消息带 `/resume`（之后每轮都把这条当锚点放在最前面）；Codex 下开新线程并用 `thread/inject_items` 预装资料（按 Serein `docs/codex-continuity-packet.md`）；其它接口把资料放进这一窗的系统提示。换窗页可选资料（最新窗影、最近 Event / Scene / 原话各 1–50 条默认 10、收藏的 Scene、尚未整理的原话、自选），可预览，最新窗影只读展示。窗影写失败会停下来问：重试 / 不写直接换；任何一步失败旧聊天都在原处
+2. **回复不被打断**（更新点 1）
+   每次生成带请求 ID（genId），只更新对应消息；离开页面 / 切后台 / 网络断一下，后端照样写完并落盘，回来按 genId 接上；只有「停止」（`POST /api/chat/stop`）才取消。生成中换模型，这一条用旧模型写完。首字超时（普通 60 秒 / Codex 90 秒）、中途卡住 60 秒、总时长 10 分钟，到点结束并保留已写的字。报错分类：登录过期 / 额度用完 / 网络或隧道断开 / 上游拒绝参数 / 超时，附「重试 / 去设置 / 重新登录」。设置 → 回复等待 可改时长
+3. **iPhone 液态玻璃回来了**（更新点 2）
+   iPhone 默认「均衡」：DPR ≤1.5、缓冲区约 100 万像素、壁纸纹理 ≤2048 只传一次、只在变化时重画、水波 30 帧、键盘弹出时暂停；防闪退保险（开 WebGL 前记标记，稳定 10 秒擦掉；下次还在 = 上次闪退 → 这次用 CSS 并轻提示；连续两次一直用 CSS，直到手动选画质）；WebGL 丢失也退 CSS。美化 → 玻璃参数 新增「玻璃画质：高清 / 均衡 / 省电」。CSS 回退：模糊更轻、加边缘高光
+4. **代码规矩**（更新点 3）
+   记忆本顶部的「项目说明」挪到 设置 → 开发，改名「代码规矩」（给写代码的 AI 看，不是 echo 人设），液态玻璃样式，保存前确认「会直接提交到仓库」
+
+技术细节：Service Worker 缓存 `echo-v13`。后端新增 `src/generations.js`、`src/reply-errors.js`、`src/timeouts.js`、`src/chat-store.js`（写入排队、原子写）、`src/windows-store.js`、`src/windows.js`、`src/serein-client.js`、`src/routes/windows.js`；新接口 `GET /api/chat/active`、`GET /api/chat/generations/:genId`、`POST /api/chat/stop`、`GET /api/windows`、`GET /api/windows/:id`、`GET /api/windows/shadow/latest`、`POST /api/windows/preview`、`GET /api/windows/candidates`、`POST /api/windows/switch`。窗口登记表 `data/memory/windows/index.json`，归档在 `data/memory/windows/<id>.json`，当前窗口仍是 `data/memory/chat.json`（多了 `windowId`）。Serein 需要打开「窗影」「开窗续接」和 /resume 命令；后端通过 `ECHO_SEREIN_CORE_URL`（默认 `http://127.0.0.1:18218`）+ `ECHO_SEREIN_TOKEN_FILE`（或 `ECHO_CODEX_SEREIN_TOKEN_FILE`）访问 Serein。
+
 ## v0.10.0 · 2026-11-25
 
 用 ChatGPT 订阅和 echo 聊天 ✿
