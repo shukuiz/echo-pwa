@@ -12,6 +12,7 @@ import favoritesRoute from "./src/routes/favorites.js";
 import beautyRoute from "./src/routes/beauty.js";
 import projectRoute from "./src/routes/project.js";
 import codexRoute from "./src/routes/codex.js";
+import windowsRoute from "./src/routes/windows.js";
 import { codexBridge } from "./src/codex.js";
 
 const app = Fastify({
@@ -41,6 +42,7 @@ await app.register(favoritesRoute);
 await app.register(beautyRoute);
 await app.register(projectRoute);
 await app.register(codexRoute);
+await app.register(windowsRoute);
 
 const PORT = Number(process.env.ECHO_PORT || 8787);
 const HOST = process.env.ECHO_HOST || "0.0.0.0";

@@ -60,6 +60,8 @@ function Chat() {
   const [modelMenu, setModelMenu] = useState(false);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [winTitle, setWinTitle] = useState("");
+  useEffect(() => { api.getWindows().then((l) => setWinTitle(l.windows.find((w) => w.id === l.activeId)?.title || "")).catch(() => {}); }, []);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const messagesRef = useRef<Msg[]>(messages);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -418,8 +420,14 @@ function Chat() {
   return (
     <PageShell
       glass
-      title="echo"
+      title={winTitle ? `echo · ${winTitle}` : "echo"}
       footer={selectBar || composer}
+      right={
+        <Link href="/chat/window" className={`chip winbtn press ${busy ? "opacity-50" : ""}`} aria-label="换窗" aria-disabled={busy}
+          onClick={(e) => { if (busy) { e.preventDefault(); toast("echo 还在回复，等这条说完再换窗"); } }}>
+          <GIcon n="win" s={17} />换窗
+        </Link>
+      }
       sub={
         <button
           onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}

@@ -287,6 +287,27 @@ export class CodexBridge extends EventEmitter {
     return { threadId: this.threadId, fresh: true, note };
   }
 
+  /**
+   * 换窗：开一条新的 Codex 线程，在第一条真实消息之前用 thread/inject_items 预装续接资料
+   * （Serein docs/codex-continuity-packet.md 的顺序：thread/start → thread/inject_items → 保存新线程 ID）。
+   * 只有注入成功才改用新线程；失败时旧线程照旧，抛错给调用方。ephemeral=true 只用来做一次性检查，不保存。
+   */
+  async startContinuityThread(cfg = DEFAULT_CODEX, items = [], { ephemeral = false } = {}) {
+    if (this.turn) throw Object.assign(new Error("上一条还在回复中，等它说完再换窗"), { code: "busy" });
+    await this.ensure();
+    const dev = await codexDeveloperInstructions(this.dataDir);
+    const res = await this.call("thread/start", { ...this.threadParams(cfg, dev), ...(ephemeral ? { ephemeral: true } : {}) });
+    const threadId = res?.thread?.id || "";
+    if (!threadId) throw new Error("Codex 没有返回对话 id");
+    if (items.length) await this.call("thread/inject_items", { threadId, items }, 60_000);
+    if (ephemeral) return { threadId, injected: items.length };
+    const old = (await this.loadState()).threadId;
+    this.threadId = threadId;
+    this.threadLoaded = true;
+    await this.saveState({ threadId, startedAt: Date.now(), agentsHash: await this.agentsHash(), lastTurnId: "", previous: old || undefined, injected: items.length });
+    return { threadId, injected: items.length, previous: old };
+  }
+
   /** 新对话：忘掉当前 thread，下一条消息时再开（旧对话留在 Codex 的记录里，不删） */
   async resetThread() {
     if (this.turn) await this.interrupt().catch(() => {});
