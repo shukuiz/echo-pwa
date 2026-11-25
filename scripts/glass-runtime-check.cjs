@@ -4,45 +4,7 @@ const { chromium, devices } = require(process.env.ECHO_PLAYWRIGHT || "playwright
 
 const url = (process.env.ECHO_URL || "http://localhost:3100") + "/?glassdebug";
 
-async function iphoneFallback(browser) {
-  const page = await browser.newPage({ ...devices["iPhone 13"], serviceWorkers: "block" });
-  try {
-    await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true } }));
-    const errors = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    await page.addInitScript(() => {
-      const context = HTMLCanvasElement.prototype.getContext;
-      window.glRequests = 0;
-      HTMLCanvasElement.prototype.getContext = function (type, ...args) {
-        if (type.startsWith("webgl")) window.glRequests++;
-        return context.call(this, type, ...args);
-      };
-    });
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await page.waitForFunction(() => window.__echoGlass?.imgReady && document.querySelector(".it.ic .icn"), undefined, { timeout: 60_000 });
-    const state = () => page.evaluate(() => ({
-      requests: window.glRequests,
-      fallback: document.documentElement.matches(".th-glass.nog"),
-      canvas: getComputedStyle(document.getElementById("g-canvas")).display,
-      blur: parseFloat(getComputedStyle(document.querySelector(".it.ic .icn")).backdropFilter.match(/blur\(([\d.]+)/)?.[1]),
-    }));
-    const before = await state();
-    assert.deepEqual([before.requests, before.fallback, before.canvas], [0, true, "none"], "iPhone should not allocate a WebGL context");
-    assert.ok(before.blur <= 6, "iPhone glass should retain wallpaper detail");
-    await page.locator(".pager").waitFor();
-    await page.mouse.move(340, 530);
-    await page.mouse.down();
-    await page.mouse.move(63, 530, { steps: 14 });
-    await page.mouse.up();
-    await page.setViewportSize({ width: 390, height: 755 });
-    const after = await state();
-    assert.deepEqual([after.requests, after.fallback, after.canvas], [0, true, "none"]);
-    assert.deepEqual(errors, []);
-    console.log("iPhone profile: CSS glass through swipe and viewport resize, with no WebGL allocation");
-  } finally {
-    await page.close();
-  }
-}
+// iPhone 的均衡档 / 防闪退保险由 scripts/glass-iphone-test.py（WebKit）检查
 
 async function desktopRecovery(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, serviceWorkers: "block" });
@@ -87,7 +49,6 @@ async function desktopRecovery(browser) {
     args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
   });
   try {
-    await iphoneFallback(browser);
     await desktopRecovery(browser);
   } finally {
     await browser.close();
