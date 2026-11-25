@@ -8,11 +8,19 @@ import {
   deletePreset,
   publicConfig,
   authHeaders,
+  chatModelUpstream,
 } from "../config.js";
 import { isMemoryModelKind, listMemoryModels, publicMemoryModels, readMemoryModels, saveMemoryModel } from "../memory-model-config.js";
 import { testMemoryModel } from "../memory-recall.js";
 
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
+
+function modelIds(data) {
+  const entries = Array.isArray(data) ? data : data?.data ?? data?.models;
+  if (!Array.isArray(entries)) return [];
+  return [...new Set(entries.map((item) => typeof item === "string" ? item : item?.id)
+    .filter((id) => typeof id === "string" && id.trim()))];
+}
 
 /** 统一把参数错误转成 400 + message */
 async function guarded(reply, fn) {
@@ -59,7 +67,10 @@ export default async function settingsRoute(app) {
   });
 
   // 读设置（Key 脱敏）
-  app.get("/api/settings", async () => publicConfig(await getRawConfig()));
+  app.get("/api/settings", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return publicConfig(await getRawConfig());
+  });
 
   // 保存设置。apiKey 写入当前生效的官方厂商或当前预设；空字符串表示清除，不传则不改
   app.put("/api/settings", async (req, reply) => guarded(reply, () => applySettingsPatch(req.body || {})));
@@ -68,6 +79,28 @@ export default async function settingsRoute(app) {
   app.post("/api/presets", async (req, reply) => guarded(reply, () => createPreset(req.body || {})));
   app.put("/api/presets/:id", async (req, reply) => guarded(reply, () => updatePreset(req.params.id, req.body || {})));
   app.delete("/api/presets/:id", async (req, reply) => guarded(reply, () => deletePreset(req.params.id)));
+
+  // 预览当前草稿的候选模型，保存配置和测试当前连接使用独立接口。
+  app.post("/api/settings/chat-models", { bodyLimit: 8192 }, async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    let cfg;
+    try {
+      cfg = await chatModelUpstream(req.body || {});
+    } catch (error) {
+      return reply.code(400).send({ message: error.message });
+    }
+    try {
+      const response = await fetch(`${cfg.proxyUrl}/models`, {
+        headers: cfg.apiKey ? authHeaders(cfg) : undefined,
+        signal: AbortSignal.timeout(12000),
+        redirect: "error",
+      });
+      if (!response.ok) return reply.code(502).send({ message: `模型接口返回 ${response.status}` });
+      return { models: modelIds(await response.json()) };
+    } catch {
+      return reply.code(502).send({ message: "无法读取模型列表，可手动填写模型名。" });
+    }
+  });
 
   // 拉取模型列表：走后端请求 {base}/models，支持 ?q= 前端/接口搜索过滤
   app.get("/api/models", async (req) => {
@@ -82,10 +115,7 @@ export default async function settingsRoute(app) {
       });
       if (!res.ok) return { error: "upstream", message: `接口返回 ${res.status}`, models: [] };
       const data = await res.json();
-      let list = [];
-      if (Array.isArray(data?.data)) list = data.data.map((m) => m?.id).filter(Boolean);
-      else if (Array.isArray(data?.models)) list = data.models.map((m) => (typeof m === "string" ? m : m?.id)).filter(Boolean);
-      else if (Array.isArray(data)) list = data.map((m) => (typeof m === "string" ? m : m?.id)).filter(Boolean);
+      let list = modelIds(data);
       const q = String(req.query?.q || "").trim().toLowerCase();
       if (q) list = list.filter((id) => id.toLowerCase().includes(q));
       return { models: list };

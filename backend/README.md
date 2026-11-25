@@ -52,6 +52,8 @@ npm start          # 默认监听 0.0.0.0:8787
 | `ECHO_PORT` | `8787` | 后端端口 |
 | `ECHO_HOST` | `0.0.0.0` | 监听地址 |
 | `ECHO_DATA_DIR` | `backend/data` | 数据目录 |
+| `ECHO_SEREIN_API_BASE` | `http://127.0.0.1:18217/v1` | 使用其他 Serein 地址时，填写可信的聊天接口地址。自定义连接名称使用 `Serein` |
+| `ECHO_SEREIN_SETTINGS_URL` | 空 | 可选的 Serein 控制台 HTTPS 设置页地址，供 Echo 设置页跳转 |
 
 ## 接口
 
@@ -68,10 +70,13 @@ npm start          # 默认监听 0.0.0.0:8787
 | GET/POST | `/api/tools` | 工具调用（P1 接入 MCP，现为占位）|
 | GET/PUT | `/api/settings` | 设置读写（Key 脱敏返回）|
 | POST | `/api/settings/test` | 测试连接 |
+| POST | `/api/settings/chat-models` | 拉取聊天连接草稿的候选模型 |
 
 ## 记忆向量召回与重排
 
-在 Echo 的「设置 → 记忆模型」分别填写向量和重排模型的完整接口地址、模型名及可选 API Key。保存立即生效，每个模型都可以独立测试。测试发送固定示例文案。刷新页面后，API Key 只显示已配置状态。更换端点时，原端点的 Key 不会随地址迁移。地址支持 HTTPS 或本机 HTTP。
+在 Echo 的「设置 → 记忆检索」分别填写 Echo 向量和重排模型的完整接口地址、模型名及可选 API Key。保存立即生效，每个模型都可以独立测试。测试发送固定示例文案。刷新页面后，API Key 以掩码呈现。更换端点时，原端点的 Key 不会随地址迁移。地址支持 HTTPS 或本机 HTTP。
+
+当前聊天连接使用受信任的 Serein 地址时，「记忆检索」会引导用户进入 Serein 设置。Echo 的 `/api/memory/recall` 使用独立的 Echo 向量和重排配置。
 
 已有服务端环境配置也可继续使用。设置页第一次保存某个模型后，已保存的配置优先。
 

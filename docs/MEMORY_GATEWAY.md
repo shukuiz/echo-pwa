@@ -22,7 +22,7 @@
 - `DELETE /api/memory/:id` → `{ ok: true }`
 - `POST /api/memory/recall` ← `{ query: string(1–1000), limit?: 1–20 }` → `{ results: RecallHit[] }`
   - `RecallHit = { id, kind, tab, title, text, score(0–1) }`
-  - 没配置向量 / 重排模型：**503** `{ error: "memory_recall_unconfigured", message }`（前端显示「去设置 → 记忆模型」）
+  - 没配置向量 / 重排模型：**503** `{ error: "memory_recall_unconfigured", message }`（前端显示「设置 → 记忆检索」）
   - 上游失败：502；超时：504；参数错：400
 
 `kind` 和旧字段 `tab` 双向映射：persona↔persona，event↔summary，scene / preference→text。旧后端不认识的扩展字段会被忽略，不会出错。

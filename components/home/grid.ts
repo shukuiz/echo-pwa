@@ -3,7 +3,7 @@
 import type { HomeItem } from "@/lib/beauty";
 import { engine, Entry, Rect } from "@/components/glass/engine";
 
-type Cell = { el: HTMLElement; g: HTMLElement; bx: number; by: number; ox: number; oy: number; w: number; h: number };
+type Cell = { el: HTMLElement; g: HTMLElement };
 type Pos = { p: number; r: number; c: number; w: number; h: number; k: number };
 type Press = { el: HTMLElement | null; id: string | null; empty: boolean; x0: number; y0: number; moved: boolean; long: boolean; t?: ReturnType<typeof setTimeout> };
 type Drag = { el: HTMLElement; id: string; offX: number; offY: number; cx: number; cy: number; x: number; y: number; t: string; last: number; lastKey: string; edgeT: ReturnType<typeof setTimeout> | 0; edgeDir: number; onSettle: (() => void) | null };
@@ -116,7 +116,6 @@ export class HomeGrid {
     const G = this.G, pr = this.pager.getBoundingClientRect();
     if (Math.abs(pr.width - G.W) > 0.5 || this.pager.clientHeight !== this.lastH) { this.layout(true); return; }
     G.px = pr.left; G.py = pr.top;
-    if (!this.drag) this.cacheCells();
   };
   private lastH = -1;
   itemBox(id: string) {
@@ -146,14 +145,12 @@ export class HomeGrid {
     this.cacheCells(); this.drawDots();
     engine.invalidate(); if (!noAnim) setTimeout(() => engine.invalidate(), 400); // 重排动画结束后按新位置再算一次字色
   }
-  // 玻璃位置缓存：每块 = 页内格子坐标 + 玻璃在格子里的偏移（offset* 不受抖动旋转影响）
+  // Cache element references after layout. Read the displayed bounds when drawing.
   cacheCells() {
     const G = this.G; G.cells = [];
     for (const el of Array.from(this.pages.querySelectorAll<HTMLElement>(".it"))) {
-      const g = el.querySelector<HTMLElement>("[data-glass]"), b = this.itemBox(el.dataset.id!); if (!g || !b) continue;
-      let ox = 0, oy = 0;
-      for (let n: HTMLElement | null = g; n && n !== el; n = n.offsetParent as HTMLElement | null) { ox += n.offsetLeft; oy += n.offsetTop; }
-      G.cells.push({ el, g, bx: b.x, by: b.y, ox, oy, w: g.offsetWidth, h: g.offsetHeight });
+      const g = el.querySelector<HTMLElement>("[data-glass]");
+      if (g && G.pos[el.dataset.id!]) G.cells.push({ el, g });
     }
   }
   drawDots() {
@@ -180,10 +177,11 @@ export class HomeGrid {
   dragged = (): Entry | null => {
     const d = this.drag; if (!d) return null;
     const c = this.G.cells.find((q) => q.el === d.el); if (!c) return null;
-    const sc = 1.06, G = this.G;
-    const x = G.px + this.PG.xNow + d.x + c.ox - (c.w * (sc - 1)) / 2, y = G.py + d.y + c.oy - (c.h * (sc - 1)) / 2;
+    const box = c.g.getBoundingClientRect();
+    const clip = this.pager.getBoundingClientRect();
     c.g.removeAttribute("data-cssg");
-    return { el: c.g, x, y, w: c.w * sc, h: c.h * sc, w0: c.w, clip: null };
+    return { el: c.g, x: box.left, y: box.top, w: box.width, h: box.height, w0: c.g.offsetWidth,
+      clip: [clip.top, clip.bottom], clipX: [clip.left, clip.right] };
   };
   // 元素在"它那一页摆正时"的屏幕位置：和翻页无关，所以滑动时不用重算字色
   restRect = (el: HTMLElement): Rect | null => {
@@ -238,6 +236,7 @@ export class HomeGrid {
     let x = sw.base + e.clientX - sw.x0;
     if (x > 0) x = this.rubber(x); else if (x < min) x = min - this.rubber(min - x);
     PG.want = x;
+    engine.requestFrame();
     sw.pts.push([e.timeStamp, e.clientX]);
     while (sw.pts.length > 2 && e.timeStamp - sw.pts[0][0] > 100) sw.pts.shift();
   }
@@ -308,6 +307,7 @@ export class HomeGrid {
   moveDrag(e: PointerEvent) {
     const d = this.drag!, G = this.G;
     d.cx = e.clientX; d.cy = e.clientY;
+    engine.requestFrame();
     // 贴边停 0.6 秒翻到隔壁页；一直停着就继续翻
     const dir = e.clientX < G.px + 26 ? -1 : e.clientX > G.px + G.W - 26 ? 1 : 0;
     if (dir !== d.edgeDir) { clearTimeout(d.edgeT as ReturnType<typeof setTimeout>); d.edgeDir = dir; d.edgeT = dir ? setTimeout(() => this.edgeFlip(), 600) : 0; }

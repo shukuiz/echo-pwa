@@ -47,7 +47,7 @@ export type Reminder = {
 };
 
 export type Hand = "codex" | "claude";
-export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string };
+export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string; model?: string };
 export type Settings = {
   apiKey: string;
   apiMode: "official" | "custom";
@@ -123,6 +123,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [toastText, setToastText] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const messageVersion = useRef(0);
+  const settingsVersion = useRef(0);
 
   // 读取本地存储
   useEffect(() => {
@@ -164,7 +165,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const initialMessageVersion = messageVersion.current;
     (async () => {
       try {
-        const [hist, mem, cfg] = await Promise.all([api.getHistory(), api.getMemory(), api.getSettings()]);
+        const [hist, mem] = await Promise.all([api.getHistory(), api.getMemory()]);
         if (cancelled) return;
         setState((prev) => ({
           ...prev,
@@ -178,29 +179,42 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           })),
           memory: mem.memory || [],
           reminders: mem.reminders || [],
-          settings: {
-            ...prev.settings,
-            apiKey: "", // Key 不落前端
-            apiMode: cfg.apiMode ?? prev.settings.apiMode,
-            provider: cfg.provider ?? prev.settings.provider,
-            presets: cfg.presets ?? prev.settings.presets,
-            activePresetId: cfg.activePresetId ?? prev.settings.activePresetId,
-            officialKeyMasks: cfg.officialKeyMasks ?? prev.settings.officialKeyMasks,
-            proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
-            anthropicWorkspaceId: cfg.anthropicWorkspaceId ?? prev.settings.anthropicWorkspaceId,
-            model: cfg.model ?? prev.settings.model,
-            models: cfg.models ?? prev.settings.models,
-            codexEnabled: cfg.codexEnabled ?? prev.settings.codexEnabled,
-            claudeEnabled: cfg.claudeEnabled ?? prev.settings.claudeEnabled,
-            defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
-            quietThink: cfg.quietThink ?? prev.settings.quietThink,
-            showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
-            mute: cfg.mute ?? prev.settings.mute,
-            tools: cfg.tools ?? prev.settings.tools,
-          },
         }));
       } catch {}
     })();
+    return () => { cancelled = true; };
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    const initialSettingsVersion = settingsVersion.current;
+    api.getSettings().then((cfg) => {
+      if (cancelled) return;
+      setState((prev) => settingsVersion.current !== initialSettingsVersion ? prev : {
+        ...prev,
+        settings: {
+          ...prev.settings,
+          apiKey: "", // Key 不落前端
+          apiMode: cfg.apiMode ?? prev.settings.apiMode,
+          provider: cfg.provider ?? prev.settings.provider,
+          presets: cfg.presets ?? prev.settings.presets,
+          activePresetId: cfg.activePresetId ?? prev.settings.activePresetId,
+          officialKeyMasks: cfg.officialKeyMasks ?? prev.settings.officialKeyMasks,
+          proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
+          anthropicWorkspaceId: cfg.anthropicWorkspaceId ?? prev.settings.anthropicWorkspaceId,
+          model: cfg.model ?? prev.settings.model,
+          models: cfg.models ?? prev.settings.models,
+          codexEnabled: cfg.codexEnabled ?? prev.settings.codexEnabled,
+          claudeEnabled: cfg.claudeEnabled ?? prev.settings.claudeEnabled,
+          defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
+          quietThink: cfg.quietThink ?? prev.settings.quietThink,
+          showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
+          mute: cfg.mute ?? prev.settings.mute,
+          tools: cfg.tools ?? prev.settings.tools,
+        },
+      });
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [ready]);
 
@@ -213,6 +227,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const set: Ctx["set"] = useCallback((key, value) => {
     if (key === "messages") messageVersion.current++;
+    if (key === "settings") settingsVersion.current++;
     setState((prev) => ({
       ...prev,
       [key]: typeof value === "function" ? (value as (p: unknown) => unknown)(prev[key]) : value,
@@ -227,6 +242,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const resetAll = useCallback(() => {
     messageVersion.current++;
+    settingsVersion.current++;
     setState(defaultState);
   }, []);
 

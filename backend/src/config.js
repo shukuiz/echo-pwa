@@ -16,6 +16,7 @@ const DEFAULT_CONFIG = {
   apiMode: "official", // official | custom
   provider: "openai", // 官方模式下的厂商：openai | deepseek | anthropic
   officialKeys: {}, // { openai: "sk-…", deepseek: "…", anthropic: "…" } 各官方 Key 分开保存，切换不丢
+  officialModels: {},
   presets: [], // 自定义预设：[{ id, name, url, apiKey }]
   activePresetId: "",
   anthropicWorkspaceId: "", // 可选：未限定 workspace 的 Claude 个人/服务账户 Key 需要带 anthropic-workspace-id
@@ -39,15 +40,15 @@ function migrate(raw) {
   const next = { ...raw };
   const legacyKey = String(raw.apiKey || "");
   const legacyUrl = normBase(raw.proxyUrl);
-  const official = OFFICIAL_BASES[raw.provider];
+  const official = OFFICIAL_PROVIDERS.includes(raw.provider) && OFFICIAL_BASES[raw.provider];
   if (!legacyUrl || (official && normBase(official) === legacyUrl)) {
     next.apiMode = "official";
     next.provider = official ? raw.provider : "openai";
     next.officialKeys = legacyKey ? { [next.provider]: legacyKey } : {};
   } else {
-    const id = presetId();
+    const id = "legacy";
     next.apiMode = "custom";
-    next.provider = OFFICIAL_BASES[raw.provider] ? raw.provider : "openai";
+    next.provider = official ? raw.provider : "openai";
     next.officialKeys = {};
     next.presets = [{ id, name: "默认预设", url: legacyUrl, apiKey: legacyKey }];
     next.activePresetId = id;
@@ -60,7 +61,8 @@ function migrate(raw) {
 /** 读取存盘的原始配置（含全部 Key，仅后端内部使用） */
 export async function getRawConfig() {
   const raw = await readJSON(paths.config(DATA_DIR), {});
-  return { ...DEFAULT_CONFIG, ...migrate(raw) };
+  const stored = migrate(raw);
+  return { ...DEFAULT_CONFIG, ...stored, officialKeys: { ...stored.officialKeys }, officialModels: { ...stored.officialModels }, presets: stored.presets || [] };
 }
 
 /** 当前生效的上游：官方厂商或选中的自定义预设 */
@@ -69,7 +71,7 @@ export function activeUpstream(raw) {
     const preset = raw.presets.find((p) => p.id === raw.activePresetId);
     return { kind: "custom", preset, proxyUrl: preset ? normBase(preset.url) : "", apiKey: preset?.apiKey || "" };
   }
-  const provider = OFFICIAL_BASES[raw.provider] ? raw.provider : "openai";
+  const provider = OFFICIAL_PROVIDERS.includes(raw.provider) ? raw.provider : "openai";
   return { kind: provider, proxyUrl: OFFICIAL_BASES[provider], apiKey: raw.officialKeys?.[provider] || "" };
 }
 
@@ -89,80 +91,176 @@ export async function saveRawConfig(next) {
   return clean;
 }
 
+let pendingWrite = Promise.resolve();
+
+function updateConfig(change) {
+  const result = pendingWrite.then(async () => saveRawConfig(change(await getRawConfig())));
+  pendingWrite = result.then(() => {}, () => {});
+  return result;
+}
+
+function setActiveModel(config, model) {
+  config.model = model;
+  const { kind, preset } = activeUpstream(config);
+  if (preset) preset.model = model;
+  else if (kind !== "custom") config.officialModels[kind] = model;
+  if (model && !config.models.includes(model)) config.models = [model, ...config.models];
+}
+
+function configuredModel(config) {
+  const { kind, preset } = activeUpstream(config);
+  return kind === "custom" ? preset?.model : config.officialModels[kind];
+}
+
+function draftModel(model) {
+  const value = typeof model === "string" ? model.trim() : "";
+  if (!value || value.length > 200) throw new Error("请输入聊天模型，最多 200 个字符");
+  return value;
+}
+
 /** 处理设置页的修改；返回新原始配置。抛出带 message 的错误表示参数不合法 */
 export async function applySettingsPatch(body) {
-  const raw = await getRawConfig();
-  const next = { ...raw, officialKeys: { ...raw.officialKeys }, presets: raw.presets.map((p) => ({ ...p })) };
+  return updateConfig((next) => {
+    const previous = activeUpstream(next);
+    const official = body.officialConnection;
 
-  if (body.apiMode === "official" || body.apiMode === "custom") next.apiMode = body.apiMode;
-  if (typeof body.provider === "string" && OFFICIAL_BASES[body.provider]) next.provider = body.provider;
-  if (typeof body.activePresetId === "string") {
-    if (body.activePresetId && !next.presets.some((p) => p.id === body.activePresetId)) throw new Error("预设不存在");
-    next.activePresetId = body.activePresetId;
-  }
-
-  // 保存 Key：写到当前生效的官方厂商，或当前选中的预设
-  if (typeof body.apiKey === "string") {
-    const key = body.apiKey.trim();
-    if (next.apiMode === "custom") {
-      const p = next.presets.find((x) => x.id === next.activePresetId);
-      if (!p) throw new Error("请先新建或选择一个自定义预设");
-      p.apiKey = key;
-    } else {
-      next.officialKeys[next.provider] = key;
+    if (body.apiMode === "official" || body.apiMode === "custom") next.apiMode = body.apiMode;
+    if (OFFICIAL_PROVIDERS.includes(body.provider)) next.provider = body.provider;
+    if (typeof body.activePresetId === "string") {
+      if (body.activePresetId && !next.presets.some((p) => p.id === body.activePresetId)) throw new Error("连接不存在");
+      next.activePresetId = body.activePresetId;
     }
-  }
 
-  if (typeof body.anthropicWorkspaceId === "string") next.anthropicWorkspaceId = body.anthropicWorkspaceId.trim();
-  if (typeof body.model === "string") next.model = body.model;
-  if (Array.isArray(body.models)) next.models = body.models.filter((m) => typeof m === "string" && m);
-  for (const k of ["codexEnabled", "claudeEnabled", "quietThink", "showStatusBar", "mute"]) {
-    if (body[k] !== undefined) next[k] = !!body[k];
-  }
-  if (body.defaultHand === "codex" || body.defaultHand === "claude") next.defaultHand = body.defaultHand;
-  if (body.tools && typeof body.tools === "object") next.tools = body.tools;
+    if (official) {
+      const { provider, model, apiKey, anthropicWorkspaceId, activate } = official;
+      if (!OFFICIAL_PROVIDERS.includes(provider)) throw new Error("未知的官方服务");
+      next.officialModels[provider] = draftModel(model);
+      if (typeof apiKey === "string") next.officialKeys[provider] = apiKey.trim();
+      if (provider === "anthropic" && typeof anthropicWorkspaceId === "string") {
+        next.anthropicWorkspaceId = anthropicWorkspaceId.trim();
+      }
+      if (activate === true) {
+        next.apiMode = "official";
+        next.provider = provider;
+      }
+    }
 
-  return saveRawConfig(next);
+    // 旧接口写入当前连接的 Key，保留其请求格式。
+    const active = activeUpstream(next);
+    if (typeof body.apiKey === "string") {
+      const key = body.apiKey.trim();
+      if (active.preset) active.preset.apiKey = key;
+      else if (active.kind === "custom") throw new Error("请先新建或选择一个自定义连接");
+      else next.officialKeys[active.kind] = key;
+    }
+
+    if (typeof body.anthropicWorkspaceId === "string") next.anthropicWorkspaceId = body.anthropicWorkspaceId.trim();
+    if (Array.isArray(body.models)) next.models = body.models.filter((m) => typeof m === "string" && m);
+    const switched = previous.kind !== active.kind || previous.preset?.id !== active.preset?.id;
+    if (switched) {
+      if (previous.preset) previous.preset.model ||= next.model;
+      else if (previous.kind !== "custom") next.officialModels[previous.kind] ||= next.model;
+    }
+    if (switched || typeof body.model === "string" || official?.provider === active.kind) {
+      setActiveModel(next, typeof body.model === "string" ? body.model : configuredModel(next) || next.model);
+    }
+    for (const k of ["codexEnabled", "claudeEnabled", "quietThink", "showStatusBar", "mute"]) {
+      if (body[k] !== undefined) next[k] = !!body[k];
+    }
+    if (body.defaultHand === "codex" || body.defaultHand === "claude") next.defaultHand = body.defaultHand;
+    if (body.tools && typeof body.tools === "object") next.tools = body.tools;
+    return next;
+  });
 }
 
 function checkUrl(url) {
-  const u = normBase(url);
-  if (!/^https?:\/\/[^\s/]+/i.test(u)) throw new Error("接口地址需以 http(s):// 开头");
-  return u;
+  const text = String(url || "").trim();
+  let parsed;
+  try { parsed = new URL(text); } catch {}
+  if (!parsed || !/^https?:\/\//i.test(text) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("请输入 HTTP 或 HTTPS 接口地址，地址不能含有账号、参数或片段");
+  }
+  return normBase(parsed.href);
 }
 
-/** 新建自定义预设并设为当前 */
-export async function createPreset({ name, url, apiKey }) {
-  const raw = await getRawConfig();
-  if (raw.presets.length >= MAX_PRESETS) throw new Error(`最多保存 ${MAX_PRESETS} 个预设`);
-  const p = {
-    id: presetId(),
-    name: String(name || "").trim().slice(0, 40) || "未命名预设",
-    url: checkUrl(url),
-    apiKey: String(apiKey || "").trim(),
-  };
-  return saveRawConfig({ ...raw, presets: [...raw.presets, p], activePresetId: p.id, apiMode: "custom" });
+/** 旧客户端默认设为当前，新设置页显式保存或切换。 */
+export async function createPreset({ name, url, apiKey, model, activate = true }) {
+  return updateConfig((raw) => {
+    if (raw.presets.length >= MAX_PRESETS) throw new Error(`最多保存 ${MAX_PRESETS} 个连接`);
+    const preset = {
+      id: presetId(),
+      name: String(name || "").trim().slice(0, 40) || "未命名连接",
+      url: checkUrl(url),
+      apiKey: String(apiKey || "").trim(),
+      ...(model !== undefined ? { model: draftModel(model) } : {}),
+    };
+    if (activate) {
+      setActiveModel(raw, raw.model);
+      raw.activePresetId = preset.id;
+      raw.apiMode = "custom";
+    }
+    raw.presets.push(preset);
+    if (activate && preset.model) setActiveModel(raw, preset.model);
+    return raw;
+  });
 }
 
 /** 修改预设；apiKey 不传表示不改 */
 export async function updatePreset(id, patch) {
-  const raw = await getRawConfig();
-  const presets = raw.presets.map((p) => ({ ...p }));
-  const p = presets.find((x) => x.id === id);
-  if (!p) throw new Error("预设不存在");
-  if (typeof patch.name === "string") p.name = patch.name.trim().slice(0, 40) || p.name;
-  if (typeof patch.url === "string") p.url = checkUrl(patch.url);
-  if (typeof patch.apiKey === "string") p.apiKey = patch.apiKey.trim();
-  return saveRawConfig({ ...raw, presets });
+  return updateConfig((raw) => {
+    const preset = raw.presets.find((item) => item.id === id);
+    if (!preset) throw new Error("连接不存在");
+    if (typeof patch.name === "string") preset.name = patch.name.trim().slice(0, 40) || preset.name;
+    if (typeof patch.url === "string") {
+      const url = checkUrl(patch.url);
+      if (url !== normBase(preset.url)) preset.apiKey = "";
+      preset.url = url;
+    }
+    if (typeof patch.apiKey === "string") preset.apiKey = patch.apiKey.trim();
+    if (patch.model !== undefined) preset.model = draftModel(patch.model);
+    if (patch.activate === true && activeUpstream(raw).preset !== preset) {
+      if (!preset.model) throw new Error("请先设置默认聊天模型");
+      setActiveModel(raw, raw.model);
+      raw.activePresetId = preset.id;
+      raw.apiMode = "custom";
+    }
+    if (preset.model && activeUpstream(raw).preset === preset) setActiveModel(raw, preset.model);
+    return raw;
+  });
 }
 
 /** 删除预设；删掉的是当前预设时自动切到剩下的第一个 */
 export async function deletePreset(id) {
+  return updateConfig((raw) => {
+    if (!raw.presets.some((p) => p.id === id)) throw new Error("连接不存在");
+    raw.presets = raw.presets.filter((p) => p.id !== id);
+    if (raw.activePresetId === id) {
+      raw.activePresetId = raw.presets[0]?.id || "";
+      if (raw.apiMode === "custom" && configuredModel(raw)) setActiveModel(raw, configuredModel(raw));
+    }
+    return raw;
+  });
+}
+
+/** 只在草稿仍使用同一个地址时使用该连接的已存 Key。 */
+export async function chatModelUpstream({ provider, presetId, url, apiKey, anthropicWorkspaceId }) {
   const raw = await getRawConfig();
-  if (!raw.presets.some((p) => p.id === id)) throw new Error("预设不存在");
-  const presets = raw.presets.filter((p) => p.id !== id);
-  const activePresetId = raw.activePresetId === id ? presets[0]?.id || "" : raw.activePresetId;
-  return saveRawConfig({ ...raw, presets, activePresetId });
+  if (OFFICIAL_PROVIDERS.includes(provider)) {
+    return {
+      provider,
+      proxyUrl: OFFICIAL_BASES[provider],
+      apiKey: typeof apiKey === "string" ? apiKey.trim() : raw.officialKeys[provider] || "",
+      anthropicWorkspaceId: typeof anthropicWorkspaceId === "string" ? anthropicWorkspaceId.trim() : raw.anthropicWorkspaceId,
+    };
+  }
+  if (provider !== "custom") throw new Error("未知的聊天服务");
+  const preset = raw.presets.find((item) => item.id === presetId);
+  const proxyUrl = checkUrl(url);
+  return {
+    provider,
+    proxyUrl,
+    apiKey: typeof apiKey === "string" ? apiKey.trim() : proxyUrl === normBase(preset?.url) ? preset?.apiKey || "" : "",
+  };
 }
 
 /** 构造上游请求的认证头：统一 Bearer；Anthropic 未限定 workspace 的 Key 需额外带 anthropic-workspace-id */
@@ -174,7 +272,26 @@ export function authHeaders(cfg) {
   return h;
 }
 
-const maskKey = (k) => (k ? `${String(k).slice(0, 3)}****${String(k).slice(-4)}` : "");
+export function maskKey(key) {
+  if (!key) return "";
+  return key.length > 7 ? `${key.slice(0, 3)}****${key.slice(-4)}` : "****";
+}
+
+function memoryManagement(upstream, env = process.env) {
+  const localSereinBase = "http://127.0.0.1:18217/v1";
+  const trustedBase = normBase(env.ECHO_SEREIN_API_BASE);
+  const matchesSerein = upstream.preset?.name.trim().toLowerCase() === "serein" &&
+    (upstream.proxyUrl === localSereinBase || (trustedBase && upstream.proxyUrl === trustedBase));
+  if (!matchesSerein) return { memoryOwner: "echo" };
+  let settingsUrl;
+  try { settingsUrl = new URL(env.ECHO_SEREIN_SETTINGS_URL); } catch {}
+  return {
+    memoryOwner: "serein",
+    sereinSettingsUrl: settingsUrl?.protocol === "https:" && !settingsUrl.username && !settingsUrl.password && !settingsUrl.search
+      ? settingsUrl.href
+      : undefined,
+  };
+}
 
 /** 供前端读取的脱敏配置：不回传任何 Key 明文 */
 export function publicConfig(raw) {
@@ -184,12 +301,16 @@ export function publicConfig(raw) {
   delete rest.proxyUrl;
   return {
     ...rest,
-    provider: OFFICIAL_BASES[raw.provider] ? raw.provider : "openai",
+    provider: OFFICIAL_PROVIDERS.includes(raw.provider) ? raw.provider : "openai",
     proxyUrl: up.proxyUrl,
     officialBases: OFFICIAL_BASES,
     officialKeyMasks: Object.fromEntries(OFFICIAL_PROVIDERS.map((p) => [p, maskKey(officialKeys?.[p])])),
-    presets: presets.map((p) => ({ id: p.id, name: p.name, url: p.url, hasKey: !!p.apiKey, keyMask: maskKey(p.apiKey) })),
+    presets: presets.map((p) => ({
+      id: p.id, name: p.name, url: p.url, hasKey: !!p.apiKey, keyMask: maskKey(p.apiKey),
+      model: p === up.preset ? raw.model : p.model || "",
+    })),
     hasKey: !!up.apiKey,
     apiKeyMask: maskKey(up.apiKey),
+    ...memoryManagement(up),
   };
 }

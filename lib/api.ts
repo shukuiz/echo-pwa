@@ -1,3 +1,5 @@
+import type { Settings } from "./store";
+
 // 后端 API 封装：聊天流式、记忆、文件、设置、提醒
 // 后端地址可用 NEXT_PUBLIC_ECHO_API 覆盖，默认本机 8787（开发/同机部署）
 export const ECHO_AUTH_ENABLED = process.env.NEXT_PUBLIC_ECHO_AUTH === "1";
@@ -8,6 +10,12 @@ export type ApiRole = "user" | "echo";
 export type MemoryModelKind = "embedding" | "rerank";
 export type MemoryModelSettings = { url: string; model: string; hasKey: boolean };
 type MemoryModelConfig = Record<MemoryModelKind, MemoryModelSettings>;
+export type EchoSettings = Omit<Settings, "apiKey"> & {
+  officialModels?: Record<string, string>;
+  memoryOwner?: "echo" | "serein";
+  sereinSettingsUrl?: string;
+};
+type ChatModelDraft = { provider: string; presetId?: string; url?: string; apiKey?: string; anthropicWorkspaceId?: string };
 
 /** 带 HTTP 状态码的错误：记忆本要区分 503（还没配置）和别的失败；status 0 = 根本没连上后端 */
 export class ApiError extends Error {
@@ -148,13 +156,16 @@ export const api = {
     jsonFetch<{ ok: true; savedAt: number }>("/api/beauty", { method: "PUT", body: JSON.stringify({ beauty, savedAt }) }),
 
   // 设置（Key 只走后端，前端拿到的已脱敏）
-  getSettings: () => jsonFetch("/api/settings"),
-  saveSettings: (patch: Record<string, unknown>) => jsonFetch("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
-  createPreset: (p: { name: string; url: string; apiKey?: string }) => jsonFetch("/api/presets", { method: "POST", body: JSON.stringify(p) }),
-  updatePreset: (id: string, p: { name?: string; url?: string; apiKey?: string }) =>
-    jsonFetch(`/api/presets/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(p) }),
-  deletePreset: (id: string) => jsonFetch(`/api/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  testConnection: () => jsonFetch("/api/settings/test", { method: "POST" }),
+  getSettings: () => jsonFetch<EchoSettings>("/api/settings", { cache: "no-store" }),
+  saveSettings: (patch: Record<string, unknown>) => jsonFetch<EchoSettings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  createPreset: (p: { name: string; url: string; apiKey?: string; model?: string; activate?: boolean }) =>
+    jsonFetch<EchoSettings>("/api/presets", { method: "POST", body: JSON.stringify(p) }),
+  updatePreset: (id: string, p: { name?: string; url?: string; apiKey?: string; model?: string; activate?: boolean }) =>
+    jsonFetch<EchoSettings>(`/api/presets/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(p) }),
+  deletePreset: (id: string) => jsonFetch<EchoSettings>(`/api/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  testConnection: () => jsonFetch<{ ok: boolean; message: string }>("/api/settings/test", { method: "POST" }),
+  listChatModels: (draft: ChatModelDraft) =>
+    jsonFetch<{ models: string[] }>("/api/settings/chat-models", { method: "POST", body: JSON.stringify(draft) }),
   // 拉取模型列表（走后端 /models，可选搜索）
   getModels: (q?: string) => jsonFetch<{ models: string[]; error?: string; message?: string }>(`/api/models${q ? `?q=${encodeURIComponent(q)}` : ""}`),
 

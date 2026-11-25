@@ -6,7 +6,7 @@
   --g-ink: #f7fbff; --g-mute: rgba(240,247,255,.74); --g-rose: #ffc2d3; --g-tsh: 0 1px 6px rgba(20,40,70,.42);
   --g-wpink: #fff; --g-wptsh: 0 1px 2px rgba(15,30,55,.7), 0 0 8px rgba(15,30,55,.6), 0 0 16px rgba(15,30,55,.35);
   --g-chip: rgba(255,255,255,.2); --g-chipon: rgba(255,255,255,.92); --g-chiponink: #4f7393;
-  --g-tint: 243,246,250; --g-amt: .06; --g-me: 255,182,200; --g-meink: #3a2630;
+  --g-tint: 243,246,250; --g-amt: .06; --g-fallback-blur: 3px; --g-me: 255,182,200; --g-meink: #3a2630;
   --g-icon: 247,248,251; --g-ica: .88; --g-tdbg: #c42d5a; --g-tdink: #fff;
   --g-wpimg: url("/wallpapers/default.jpg");
 }
@@ -36,7 +36,7 @@ html.wall-on #g-wall, html.wall-gl #g-canvas { display: block; }
 /* 液态玻璃：光学交给 WebGL；无 WebGL / 减弱动态 / 超出上限时用 CSS 毛玻璃 */
 html.th-glass.nog .bty .g, html.th-glass .bty .g[data-cssg] {
   background: rgba(var(--g-tint), calc((.16 + var(--g-amt) * .9) * var(--wa, 1)));
-  backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(var(--g-fallback-blur)) saturate(1.18); -webkit-backdrop-filter: blur(var(--g-fallback-blur)) saturate(1.18);
   box-shadow: inset 1px 1px 0 rgba(255,255,255,.5), inset -1px -1px 0 rgba(255,255,255,.14);
 }
 /* 仿真：大圆角、柔阴影、磨砂或实色 */

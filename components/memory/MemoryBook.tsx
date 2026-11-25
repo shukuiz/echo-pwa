@@ -155,7 +155,7 @@ export default function MemoryBook() {
           <button type="submit" disabled={!rq.trim() || recalling}>{recalling ? "想…" : "试试"}</button>
         </form>
         {recall?.state === "unconfigured" && (
-          <p className="hint">还没配置向量和重排模型，暂时不能召回 (´•ω•`)<br /><Link href="/settings" className="lnk">去「设置 → 记忆模型」配置 ›</Link></p>
+          <p className="hint">Echo 的召回测试需要配置向量模型和重排模型。<br /><Link href="/settings#echo-memory-retrieval" className="lnk">打开 Echo 召回设置 ›</Link></p>
         )}
         {recall?.state === "error" && <p className="hint" role="alert">{recall.message}</p>}
         {recall?.state === "ok" && (
