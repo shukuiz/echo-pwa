@@ -1,10 +1,16 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.10.0";
+export const APP_VERSION = "0.10.1";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.10.1", date: "2026-11-25", title: "修复 Codex 新对话",
+    items: [
+      { t: "修复「新对话」按钮", d: "在设置 → 聊天连接 → Codex 中点「新对话」，下一条消息会开启新的 Codex 对话。Echo 聊天记录会继续保留。" },
+    ],
+  },
   {
     version: "0.10.0", date: "2026-11-25", title: "用 ChatGPT 订阅和 echo 聊天 ✿",
     items: [
