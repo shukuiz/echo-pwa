@@ -5,7 +5,7 @@
 :root {
   /* 重点色家族：默认值 = DEFAULT_ACCENT 派生的结果（lib/color.ts accentFamily），JS 加载后按设置覆盖 */
   --hl: #b4637a; --hl-rgb: 180 99 122; --hl-ink: #171417; --hl-deep: #903f56; --hl-deep-ink: #fff; --hl-soft: #f2e3e7; --hl-soft-ink: #ab526c;
-  --hl-alt: #c67770; --hl-alt-ink: #171417; --hl-alt2: #bc84a3; --hl-alt2-ink: #171417; --hl-glow: rgba(180,99,122,.5); --hl-glow-soft: rgba(180,99,122,.25);
+  --hl-alt: #c67170; --hl-alt-ink: #171417; --hl-alt2: #bc84a3; --hl-alt2-ink: #171417; --hl-glow: rgba(180,99,122,.5); --hl-glow-soft: rgba(180,99,122,.25);
   --hl-text-d: #ab526c; --hl-text-l: #cd889c;
   --g-ink: #f7fbff; --g-mute: rgba(240,247,255,.74); --g-rose: var(--hl-text-l); --g-tsh: 0 1px 6px rgba(20,40,70,.42);
   --g-wpink: #fff; --g-wptsh: 0 1px 2px rgba(15,30,55,.7), 0 0 8px rgba(15,30,55,.6), 0 0 16px rgba(15,30,55,.35);
@@ -421,9 +421,8 @@ html.th-real .bty .pv .pvicn { border-radius: 13px; }
 .pvdot { width: 10px; height: 10px; border-radius: 50%; background: var(--hl); box-shadow: 0 0 0 3px var(--hl-glow-soft); }
 .pvtd { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; background: var(--hl); color: var(--hl-ink); text-shadow: none; font-variant-numeric: tabular-nums; }
 /* 一一对应：改哪项，预览里那块亮一下 */
-.pv-hi { outline: 2px solid var(--hl); outline-offset: 2px; animation: pvhi .9s ease; }
-.card.pv.pv-hi { outline-offset: -2px; }
-@keyframes pvhi { 0% { outline-color: transparent; } 20%, 70% { outline-color: var(--hl); } 100% { outline-color: transparent; } }
+.pv-hi { outline: 2px solid var(--hl) !important; outline-offset: 2px; filter: drop-shadow(0 0 6px var(--hl-glow)); }
+.card.pv.pv-hi { outline-offset: -3px; filter: none; }
 
 .grp { padding: 0; }
 .grp > h3 { margin: 0; }
@@ -445,7 +444,6 @@ html.th-real .bty .pv .pvicn { border-radius: 13px; }
 .hexin:focus { box-shadow: 0 0 0 2px var(--hl); }
 @media (prefers-reduced-motion: reduce) {
   .grp-b, .grp-in, .grp-c, .topsave { transition: none; }
-  .pv-hi { animation: none; }
 }
 
 /* ================= 更新公告 ================= */
@@ -467,3 +465,4 @@ html.th-real .bty .pv .pvicn { border-radius: 13px; }
 html.dark .unotes { background: rgba(36,38,46,.9); color: #eef1f6; }
 html.dark .ulist li { background: rgba(255,255,255,.07); } html.dark .ulist b { color: #eef1f6; } html.dark .ulist span, html.dark .uold { color: #b9c0cc; }
 html.dark .ulead { color: var(--hl-text-l); }
+.ubtn:focus:not(:focus-visible) { outline: none; }

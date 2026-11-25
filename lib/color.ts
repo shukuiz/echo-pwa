@@ -132,7 +132,7 @@ const DARK_BG: RGB = [38, 48, 61];     // 深壁纸 / 深色玻璃
 
 /**
  * 重点色家族（CSS 变量名 → 值）：
- * --hl 本色 / --hl-deep 深一阶 / --hl-soft 浅底 / --hl-alt 邻近色相（±22°，做点变化）/ --hl-glow 阴影光晕
+ * --hl 本色 / --hl-deep 深一阶 / --hl-soft 浅底 / --hl-alt 邻近色相（±18°，做点变化）/ --hl-glow 阴影光晕
  * --hl-ink 等：压在对应底色上的字色；--hl-text-d / --hl-text-l：浅底、深底上当文字用时保证 4.5:1 的版本
  */
 export function accentFamily(hex: string): Record<string, string> {
@@ -140,7 +140,7 @@ export function accentFamily(hex: string): Record<string, string> {
   const warm = h < 60 || h >= 300; // 暖色往黄偏一点，冷色往紫偏一点，都还是同一家
   const deep = hsl2rgb([h, Math.min(100, s + 4), Math.max(Math.min(l, 12), l - 14)]);
   const soft = hsl2rgb([h, Math.min(70, s * 0.75 + 10), 92]);
-  const alt = hsl2rgb([h + (warm ? 22 : -22), Math.min(100, s + 8), Math.min(76, Math.max(40, l + 6))]);
+  const alt = hsl2rgb([h + (warm ? 18 : -18), Math.min(100, s + 8), Math.min(76, Math.max(40, l + 6))]);
   const alt2 = hsl2rgb([h + (warm ? -16 : 16), Math.max(20, s - 6), Math.min(80, Math.max(40, l + 8))]);
   const tD = reach([h, s, Math.min(l, 60)], LIGHT_BG, -1);
   const tL = reach([h, Math.min(100, s + 6), Math.max(l, 62)], DARK_BG, 1);

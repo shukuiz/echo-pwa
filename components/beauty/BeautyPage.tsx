@@ -145,7 +145,7 @@ export default function BeautyPage() {
     setB(patch);
     setHi(part);
     clearTimeout(hiT.current);
-    hiT.current = setTimeout(() => setHi(null), 900);
+    hiT.current = setTimeout(() => setHi(null), 1200);
   };
 
   const goBack = () => (window.history.length > 1 ? router.back() : router.push("/"));

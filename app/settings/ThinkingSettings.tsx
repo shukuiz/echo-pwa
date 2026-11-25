@@ -54,7 +54,8 @@ export default function ThinkingSettingsSection({ config, targets, onSaved }: {
   const pvT = useRef<ReturnType<typeof setTimeout>>();
 
   // 切换连接 / 保存后：草稿回到已保存的值
-  useEffect(() => { setDraft(saved); setStatus(null); }, [saved]);
+  useEffect(() => { setDraft(saved); }, [saved]);
+  useEffect(() => { setStatus(null); }, [targetKey]);
   // 当前连接变了（在上面切换了当前连接），跟着切过去
   useEffect(() => {
     const cur = targets.find((t) => t.current);
