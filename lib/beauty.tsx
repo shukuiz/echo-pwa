@@ -231,6 +231,10 @@ function writeLocal(b: Beauty) {
   try { localStorage.setItem(BEAUTY_KEY, JSON.stringify(b)); return true; } catch { return false; }
 }
 
+function readBack(b: Beauty) {
+  try { return localStorage.getItem(BEAUTY_KEY) === JSON.stringify(b); } catch { return false; }
+}
+
 export type SaveResult = { local: boolean; cloud: "ok" | "offline" | "skipped" };
 
 type Ctx = {
@@ -340,14 +344,24 @@ export function BeautyProvider({ children }: { children: React.ReactNode }) {
 
   const save = useCallback(async (): Promise<SaveResult> => {
     clearTimeout(saveT.current);
-    const next = { ...bRef.current, savedAt: Date.now() };
-    const local = persist(next);
+    let next = { ...bRef.current, savedAt: Math.max(Date.now(), (savedRef.current.savedAt || 0) + 1) };
+    // 写完再读回来对一遍：iOS 存储满 / 无痕时 setItem 可能不报错却没写进去
+    const local = persist(next) && readBack(next);
     setState(next);
     setDirty(false);
     try {
       await api.putBeauty(next, next.savedAt);
       return { local, cloud: "ok" };
-    } catch {
+    } catch (e) {
+      // 409：云端那份的时间更「新」（别的设备时钟快、或旧页面刚自动保存过）。
+      // 手动点「保存」= 你现在看到的就是要的，抬高时间戳再存一次，不然下次打开会被云端旧样子盖回去
+      const remoteAt = (e as { status?: number; savedAt?: number }).status === 409 ? Number((e as { savedAt?: number }).savedAt) : NaN;
+      if (Number.isFinite(remoteAt)) {
+        next = { ...next, savedAt: remoteAt + 1 };
+        persist(next);
+        setState(next);
+        try { await api.putBeauty(next, next.savedAt); return { local, cloud: "ok" }; } catch {}
+      }
       return { local, cloud: "offline" };
     }
   }, [persist]);

@@ -59,6 +59,7 @@ const PATHS: Record<string, string> = {
   jump: '<path d="M14 5h5v5M19 5l-8 8M17 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4"/>',
   brain: '<path d="M9 4.5a3 3 0 0 0-3 3 3 3 0 0 0-1.5 5.3A3 3 0 0 0 7 17.5a2.5 2.5 0 0 0 5 .5V5.8A2 2 0 0 0 9 4.5zM15 4.5a3 3 0 0 1 3 3 3 3 0 0 1 1.5 5.3A3 3 0 0 1 17 17.5a2.5 2.5 0 0 1-5 .5"/>',
   download: '<path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/>',
+  chev: '<path d="M6 9.5l6 6 6-6"/>',
   filter: '<path d="M4.5 6h15M7.5 12h9M10.5 18h3"/>',
 };
 

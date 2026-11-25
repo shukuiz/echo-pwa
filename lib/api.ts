@@ -21,6 +21,7 @@ type ChatModelDraft = { provider: string; presetId?: string; url?: string; apiKe
 export class ApiError extends Error {
   status: number;
   code?: string;
+  savedAt?: number;
   constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
@@ -51,7 +52,9 @@ async function requestError(res: Response) {
   }
   if (data?.error === "no_key") return new ApiError("后端还没设置 API Key，请先到设置页保存", res.status, "no_key");
   const message = typeof data?.message === "string" && data.message;
-  return new ApiError(message || `请求失败 (${res.status})`, res.status, typeof data?.error === "string" ? data.error : undefined);
+  const err = new ApiError(message || `请求失败 (${res.status})`, res.status, typeof data?.error === "string" ? data.error : undefined);
+  if (typeof data?.savedAt === "number") err.savedAt = data.savedAt; // 美化备份 409：云端那份的时间
+  return err;
 }
 
 // ---------- 收藏本 ----------

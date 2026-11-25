@@ -398,3 +398,52 @@ html.dark .gmenu { background: rgba(40,42,50,.8); color: #eef1f6; }
 .fav .acts { display: flex; gap: 6px; }
 .fav .acts button { flex: 1; border: 0; cursor: pointer; min-height: 44px; border-radius: 14px; background: var(--g-chip); color: inherit; display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 13.5px; text-shadow: none; }
 .fav .acts button.danger { color: #ff7d9b; }
+
+/* ================= 美化页：分组收纳 + 预览 + 顶部保存 ================= */
+.bpage .wbar { padding-right: 8px; }
+.wbar .unsaved { margin-left: auto; }
+.topsave { margin-left: auto; border: 0; cursor: pointer; min-height: 44px; min-width: 64px; padding: 0 16px; border-radius: 999px; font-size: 15px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; gap: 4px; background: var(--g-chip); color: var(--g-ink); text-shadow: none; transition: transform .15s, background .2s; }
+.unsaved + .topsave { margin-left: 0; }
+.topsave.on { background: var(--hl); color: var(--hl-ink); box-shadow: 0 6px 16px -6px var(--hl-glow); }
+.topsave:disabled:not(.on) { opacity: .72; cursor: default; }
+.topsave:active:not(:disabled) { transform: scale(.96); }
+
+.pvwrap { padding: 0 14px 12px; }
+.card.pv { --r: 24px; display: flex; align-items: center; gap: 12px; padding: 12px 14px; min-height: 76px; }
+.pv .pvicn { --r: 16px; width: 48px; height: 48px; }
+html.th-real .bty .pv .pvicn { border-radius: 13px; }
+.pvchat { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pv .pvb { --r: 16px; font-size: 13.5px; line-height: 1.3; padding: 6px 11px; border-radius: 16px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: flex-start; }
+.pv .pvb.ai { border-bottom-left-radius: 6px; }
+.pv .pvb.me { align-self: flex-end; border-bottom-right-radius: 6px; }
+.pvacc { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; border-radius: 14px; padding: 4px; }
+.pvdot { width: 10px; height: 10px; border-radius: 50%; background: var(--hl); box-shadow: 0 0 0 3px var(--hl-glow-soft); }
+.pvtd { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; background: var(--hl); color: var(--hl-ink); text-shadow: none; font-variant-numeric: tabular-nums; }
+/* 一一对应：改哪项，预览里那块亮一下 */
+.pv-hi { outline: 2px solid var(--hl); outline-offset: 2px; animation: pvhi .9s ease; }
+.card.pv.pv-hi { outline-offset: -2px; }
+@keyframes pvhi { 0% { outline-color: transparent; } 20%, 70% { outline-color: var(--hl); } 100% { outline-color: transparent; } }
+
+.grp { padding: 0; }
+.grp > h3 { margin: 0; }
+.grp-h { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 16px; border: 0; background: none; color: var(--g-ink); cursor: pointer;
+  font-size: 15.5px; font-weight: 600; text-align: left; text-shadow: inherit; border-radius: var(--r, 26px); }
+.grp-h:focus-visible { outline: 2px solid var(--hl); outline-offset: -2px; }
+.grp-t { flex-shrink: 0; }
+.grp-s { flex: 1; min-width: 0; text-align: right; font-size: 13px; font-weight: 500; color: var(--g-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.grp-s .sdot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); flex-shrink: 0; }
+.grp-c { transition: transform .28s cubic-bezier(.2,.85,.25,1); opacity: .7; }
+.grp.open .grp-c { transform: rotate(180deg); }
+.grp-b { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s cubic-bezier(.2,.85,.25,1); }
+.grp.open .grp-b { grid-template-rows: 1fr; }
+.grp-in { overflow: hidden; min-height: 0; padding: 0 16px; visibility: hidden; transition: visibility 0s linear .3s, padding .3s; }
+.grp.open .grp-in { visibility: visible; transition: visibility 0s, padding .3s; padding: 2px 16px 16px; }
+.grp-in > .sub:first-child { margin-top: 0; }
+.hexrow { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+.hexin { width: 8.5em; min-height: 40px; border: 0; outline: 0; border-radius: 12px; padding: 0 12px; font-family: ui-monospace, Menlo, monospace; font-size: 16px; background: var(--g-chip); color: var(--g-ink); text-shadow: none; }
+.hexin:focus { box-shadow: 0 0 0 2px var(--hl); }
+@media (prefers-reduced-motion: reduce) {
+  .grp-b, .grp-in, .grp-c, .topsave { transition: none; }
+  .pv-hi { animation: none; }
+}
