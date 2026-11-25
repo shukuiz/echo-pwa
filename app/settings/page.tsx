@@ -1,12 +1,13 @@
 "use client";
 
 import { PageShell, Segmented, SettingsDrawer, Toggle } from "@/components/Chrome";
-import { IconCode, IconHand, IconWand } from "@/components/Icons";
+import { IconChevron, IconCode, IconHand, IconWand } from "@/components/Icons";
 import { Hand, useStore } from "@/lib/store";
 import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
 import { DEFAULT_ACCENT, useBeauty } from "@/lib/beauty";
 import ChatConnectionSettings from "./ChatConnectionSettings";
 import { openUpdateNotes } from "@/components/UpdateNotes";
+import Link from "next/link";
 import { APP_VERSION } from "@/lib/version";
 
 // 计划接入的 MCP 服务（与后端 /api/tools 一致），后期接入
@@ -36,6 +37,14 @@ export default function SettingsPage() {
     <PageShell title="设置">
       <div className="space-y-5 pt-1">
         <ChatConnectionSettings />
+
+        <Link href="/settings/manual" className="block-white press flex min-h-14 items-center justify-between gap-3 rounded-[24px] px-4 py-3">
+          <span className="min-w-0">
+            <span className="block font-semibold">说明书</span>
+            <span className="block truncate text-[13px] text-mute">echo 是谁、怎么说话（AGENTS.md），随时改</span>
+          </span>
+          <IconChevron size={18} className="-rotate-90 shrink-0 text-mute" />
+        </Link>
 
         <SettingsDrawer title="动手入口">
           <div className="divide-y divide-line">

@@ -52,7 +52,7 @@ export type Hand = "codex" | "claude";
 export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string; model?: string; thinking?: ThinkingSettings };
 export type Settings = {
   apiKey: string;
-  apiMode: "official" | "custom";
+  apiMode: "official" | "custom" | "codex";
   provider: string;
   presets: ApiPreset[];
   activePresetId: string;

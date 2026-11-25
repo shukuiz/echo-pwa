@@ -6,6 +6,7 @@ import { api, type EchoSettings } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import MemoryModelSettingsSection from "./MemoryModelSettings";
 import ThinkingSettingsSection, { type ThinkTarget } from "./ThinkingSettings";
+import { CODEX_NAME, CodexEditor } from "./CodexSettings";
 
 const OFFICIAL = {
   openai: { name: "OpenAI", url: "https://api.openai.com/v1", suggestedModel: "gpt-4o-mini" },
@@ -16,7 +17,9 @@ type Provider = keyof typeof OFFICIAL;
 
 type Connection =
   | { kind: "official"; provider: Provider; name: string; url: string; keyMask: string; model: string; workspaceId: string }
-  | { kind: "custom"; id: string; name: string; url: string; keyMask: string; model: string };
+  | { kind: "custom"; id: string; name: string; url: string; keyMask: string; model: string }
+  | { kind: "codex"; name: string; url: string; keyMask: string; model: string };
+type ApiConnection = Exclude<Connection, { kind: "codex" }>;
 
 type Feedback = { kind: "working" | "success" | "error"; message: string };
 
@@ -24,10 +27,12 @@ const NEW_CONNECTION: Connection = { kind: "custom", id: "", name: "", url: "", 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error && error.message ? error.message : fallback;
 
 function connectionId(connection: Connection) {
+  if (connection.kind === "codex") return "codex";
   return connection.kind === "official" ? `official-${connection.provider}` : `custom-${connection.id}`;
 }
 
 function connectionIsCurrent(connection: Connection, config: EchoSettings) {
+  if (connection.kind === "codex") return config.apiMode === "codex";
   return connection.kind === "official"
     ? config.apiMode === "official" && config.provider === connection.provider
     : config.apiMode === "custom" && config.activePresetId === connection.id;
@@ -45,7 +50,7 @@ function InlineStatus({ value }: { value: Feedback | null }) {
 function ConnectionEditor({
   connection, candidates, activate, onClose, onSaved,
 }: {
-  connection: Connection;
+  connection: ApiConnection;
   candidates: string[];
   activate: boolean;
   onClose: () => void;
@@ -253,6 +258,10 @@ export default function ChatConnectionSettings() {
   }
 
   async function makeCurrent(connection: Connection) {
+    if (connection.kind === "codex") {
+      openEditor(connection, true);
+      return;
+    }
     if (!connection.model) {
       openEditor(connection, true);
       return;
@@ -282,6 +291,16 @@ export default function ChatConnectionSettings() {
 
   async function testCurrent() {
     setTestStatus({ kind: "working", message: "正在测试当前连接…" });
+    if (current?.kind === "codex") {
+      try {
+        const s = await api.codexStatus();
+        const ok = s.alive && s.loggedIn;
+        setTestStatus({ kind: ok ? "success" : "error", message: ok ? "测试通过 · Codex 在线，ChatGPT 已登录" : `测试失败 · ${s.error || (s.loggedIn ? "Codex 没在运行" : "ChatGPT 还没登录，点「编辑连接」登录一下")}` });
+      } catch (error) {
+        setTestStatus({ kind: "error", message: errorMessage(error, "测试连接失败") });
+      }
+      return;
+    }
     try {
       const result = await api.testConnection();
       setTestStatus({ kind: result.ok ? "success" : "error", message: result.ok ? `测试通过 · ${result.message}` : `测试失败 · ${result.message}` });
@@ -297,6 +316,7 @@ export default function ChatConnectionSettings() {
       model: config.apiMode === "official" && config.provider === provider ? config.model : config.officialModels?.[provider] || "",
       workspaceId: provider === "anthropic" ? config.anthropicWorkspaceId : "",
     })),
+    { kind: "codex", name: CODEX_NAME, url: "", keyMask: "", model: config.codex?.model || "跟随 Codex 默认模型" },
     ...config.presets.map((preset): Connection => ({
       kind: "custom", id: preset.id, name: preset.name, url: preset.url, keyMask: preset.keyMask,
       model: config.apiMode === "custom" && config.activePresetId === preset.id ? config.model : preset.model || "",
@@ -335,7 +355,11 @@ export default function ChatConnectionSettings() {
                 )}
               </div>
               <InlineStatus value={testStatus} />
-              {editor && (
+              {editor?.connection.kind === "codex" && (
+                <CodexEditor config={config} activate={editor.activate} onClose={() => setEditor(null)}
+                  onSaved={(next, message) => applyConfig(next, message)} />
+              )}
+              {editor && editor.connection.kind !== "codex" && (
                 <ConnectionEditor key={connectionId(editor.connection)} connection={editor.connection} candidates={editCandidates} activate={editor.activate}
                   onClose={() => setEditor(null)} onSaved={(next) => {
                     if (editor.connection.kind === "custom" && !editor.connection.id) setShowConnections(true);
@@ -391,7 +415,7 @@ export default function ChatConnectionSettings() {
       </SettingsDrawer>
       {config && (
         <ThinkingSettingsSection config={config} onSaved={(next) => setConfig(next)}
-          targets={connections.filter((c) => c.kind === "custom" || c.keyMask || connectionIsCurrent(c, config)).map((c): ThinkTarget => ({
+          targets={connections.filter((c): c is ApiConnection => c.kind !== "codex" && (c.kind === "custom" || !!c.keyMask || connectionIsCurrent(c, config))).map((c): ThinkTarget => ({
             key: connectionId(c), name: c.name, kind: c.kind, provider: c.kind === "official" ? c.provider : "custom",
             id: c.kind === "custom" ? c.id : undefined, model: c.model, current: connectionIsCurrent(c, config),
           }))} />
