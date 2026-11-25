@@ -2,6 +2,7 @@
 import { getConfig, authHeaders } from "../config.js";
 import { buildSystemPrompt } from "../prompt.js";
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
+import { planThinking, ThinkSplitter, stripThink, shouldRetryWithoutThinking } from "../thinking.js";
 
 const MAX_HISTORY = 20;
 const MAX_DELETE = 500;
@@ -102,13 +103,17 @@ export default async function chatRoute(app) {
     const useResponses = cfg.provider === "openai" && typeof model === "string" &&
       /^(?:gpt-[56](?:[.\-]|$)|o[134](?:-|$))/i.test(model) && !/-(?:chat|codex)(?:-|$)/i.test(model);
 
-    // 最近 20 条历史（含本次用户消息），映射为 OpenAI 消息格式
+    // 最近 20 条历史（含本次用户消息），映射为 OpenAI 消息格式；
+    // 只发正文：思考（reasoning / <think>）永远不回传给下一轮
     const history = incoming.slice(-MAX_HISTORY).map((m) => ({
       role: m.role === "user" ? "user" : "assistant",
-      content: String(m.text ?? m.content ?? ""),
+      content: m.role === "user" ? String(m.text ?? m.content ?? "") : stripThink(m.text ?? m.content ?? ""),
     }));
 
-    const system = await buildSystemPrompt();
+    // 思考：原生参数 / 强制 CoT 提示词（用户在设置里保存的原文）
+    const plan = planThinking(cfg.thinking, { provider: cfg.provider, model });
+    const baseSystem = await buildSystemPrompt();
+    const system = plan.systemAppend ? `${baseSystem}\n\n${plan.systemAppend}` : baseSystem;
     const messages = [{ role: "system", content: system }, ...history];
 
     // 落盘：保存这次的用户消息到聊天记录
@@ -128,19 +133,40 @@ export default async function chatRoute(app) {
     };
     reply.raw.on("close", onClientClose);
 
+    // 官方 /responses（gpt-5 / o 系列）：原生思考时带上强度；只有明确关掉才不要思考摘要
+    const t = cfg.thinking || {};
+    const responsesReasoning = plan.mode === "off" && t.saved
+      ? undefined
+      : { summary: "auto", ...(plan.mode === "native" ? { effort: t.effort } : {}) };
+    const requestBody = (withThinking) => JSON.stringify(useResponses
+      ? { model, input: messages, stream: true, ...(responsesReasoning ? { reasoning: responsesReasoning } : {}), store: false }
+      : { ...(withThinking ? plan.extras : {}), model, messages, stream: true });
+    const send = (withThinking) => fetch(`${base}${useResponses ? "/responses" : "/chat/completions"}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(cfg), // Key 仅在后端使用；Anthropic 额外带 workspace-id
+      },
+      body: requestBody(withThinking),
+      signal: upstreamAbort.signal,
+    });
+
     let upstream;
+    let note = "";
     try {
-      upstream = await fetch(`${base}${useResponses ? "/responses" : "/chat/completions"}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(cfg), // Key 仅在后端使用；Anthropic 额外带 workspace-id
-        },
-        body: JSON.stringify(useResponses
-          ? { model, input: messages, stream: true, reasoning: { summary: "auto" }, store: false }
-          : { model, messages, stream: true }),
-        signal: upstreamAbort.signal,
-      });
+      upstream = await send(true);
+      // 上游不认识思考参数（400）：去掉参数再试一次，并温柔地告诉前端
+      if (!useResponses && shouldRetryWithoutThinking(upstream.status, plan)) {
+        const detail = await upstream.text().catch(() => "");
+        const retry = await send(false);
+        if (retry.ok) {
+          upstream = retry;
+          note = "这个接口好像不认识思考参数，这次先不带思考回复啦（可以在设置 → 思考里换成「强制思考」）";
+        } else {
+          await retry.text().catch(() => "");
+          upstream = new Response(detail, { status: 400, headers: { "content-type": "application/json" } });
+        }
+      }
     } catch (e) {
       reply.raw.off("close", onClientClose);
       reply.code(502);
@@ -186,6 +212,19 @@ export default async function chatRoute(app) {
       sendHeaders();
       reply.raw.write(structured ? JSON.stringify({ type, text }) + "\n" : text);
     };
+    const splitter = new ThinkSplitter();
+    let notePending = structured ? note : "";
+    const emit = ({ thought, content }) => {
+      if (notePending && (thought || content)) { writeDelta("note", notePending); notePending = ""; }
+      if (thought) {
+        reasoning += thought;
+        if (structured) writeDelta("reasoning", thought);
+      }
+      if (content) {
+        fullText += content;
+        writeDelta("content", content);
+      }
+    };
 
     const pushDelta = (data) => {
       // data 为单个 SSE 的 data: 载荷
@@ -203,14 +242,9 @@ export default async function chatRoute(app) {
       }
       if (!json || typeof json !== "object") return;
       const { thought, content } = chatDeltas(json);
-      if (thought) {
-        reasoning += thought;
-        if (structured) writeDelta("reasoning", thought);
-      }
-      if (content) {
-        fullText += content;
-        writeDelta("content", content);
-      }
+      if (thought) emit({ thought });
+      // 正文里的 <think>…</think>（强制 CoT、QwQ / R1 一类模型）拆到思考里；标签可能跨两段
+      if (content) emit(splitter.push(content));
     };
 
     let interrupted = false;
@@ -241,13 +275,23 @@ export default async function chatRoute(app) {
     }
 
     const stopped = upstreamAbort.signal.aborted;
+    // 把拆分器里留着的尾巴（可能是半个标签之外的字）补上
+    const tail = splitter.flush();
+    if (stopped || reply.raw.destroyed) { reasoning += tail.thought; fullText += tail.content; }
+    else {
+      emit(tail);
+      if (tail.unclosed && !fullText && structured && !streamError) {
+        note = "模型的思考没写完就停下了，这次没有正文 (；´д｀)";
+        writeDelta("note", note);
+      }
+    }
     // 落盘：先保存助手完整回复再结束响应，前端拿到「完成」后立刻删除 / 重新生成也对得上
     try {
       if (fullText || reasoning) {
         const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
         const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
         const id = replyId && !chat.messages.some((m) => m.id === replyId) ? replyId : uid();
-        chat.messages.push({ id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), at: Date.now(), status });
+        chat.messages.push({ id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), ...(note ? { note } : {}), at: Date.now(), status });
         await writeJSON(paths.chat(DATA_DIR), chat);
       }
     } catch {}

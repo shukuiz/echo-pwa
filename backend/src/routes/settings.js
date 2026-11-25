@@ -12,6 +12,7 @@ import {
 } from "../config.js";
 import { isMemoryModelKind, listMemoryModels, publicMemoryModels, readMemoryModels, saveMemoryModel } from "../memory-model-config.js";
 import { testMemoryModel } from "../memory-recall.js";
+import { DEFAULT_COT_PROMPT, DEFAULT_THINKING, normThinking, planThinking } from "../thinking.js";
 
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
 
@@ -64,6 +65,19 @@ export default async function settingsRoute(app) {
     const { kind } = req.params;
     if (!isMemoryModelKind(kind)) return reply.code(404).send({ message: "未知的记忆模型类型" });
     return testMemoryModel(kind, (await readMemoryModels())[kind]);
+  });
+
+  // 思考设置预览：设置页显示「最终会加到请求里的参数」，和聊天时用的是同一个函数
+  app.post("/api/settings/thinking-preview", { bodyLimit: 16 * 1024 }, async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const { thinking, provider, model } = req.body || {};
+    try {
+      const t = normThinking(thinking);
+      const plan = planThinking(t, { provider: typeof provider === "string" ? provider : "custom", model });
+      return { ...plan, defaults: { ...DEFAULT_THINKING, cotPrompt: DEFAULT_COT_PROMPT } };
+    } catch (e) {
+      return reply.code(400).send({ error: "bad_request", message: e.message });
+    }
   });
 
   // 读设置（Key 脱敏）
