@@ -10,8 +10,16 @@ export type ApiRole = "user" | "echo";
 export type MemoryModelKind = "embedding" | "rerank";
 export type MemoryModelSettings = { url: string; model: string; hasKey: boolean };
 type MemoryModelConfig = Record<MemoryModelKind, MemoryModelSettings>;
+// ---------- 思考（每个连接单独一份，后端 backend/src/thinking.js） ----------
+export type ThinkMode = "off" | "native" | "cot";
+export type ThinkFormat = "auto" | "openai" | "anthropic" | "gemini" | "deepseek";
+export type ThinkEffort = "minimal" | "low" | "medium" | "high";
+export type ThinkingSettings = { mode: ThinkMode; format: ThinkFormat; effort: ThinkEffort; budget: number; extra: string; cotPrompt: string };
+export type ThinkingPlan = { mode: ThinkMode; format: Exclude<ThinkFormat, "auto">; extras: Record<string, unknown>; systemAppend: string; defaults: ThinkingSettings };
+
 export type EchoSettings = Omit<Settings, "apiKey"> & {
   officialModels?: Record<string, string>;
+  officialThinking?: Record<string, ThinkingSettings>;
   memoryOwner?: "echo" | "serein";
   sereinSettingsUrl?: string;
 };
@@ -90,6 +98,8 @@ export async function chatStream(
   messages: ChatMsgInput[],
   opts: {
     model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void;
+    /** 后端的小提示：比如接口不认思考参数、已经去掉参数重试 */
+    onNote?: (text: string) => void;
     /** 前端自己的消息 id：后端按这个存，之后删除 / 重新生成才对得上 */
     ids?: { user?: string; echo?: string };
     /** 重新生成本轮：用户消息已经在记录里，后端不再存一遍 */
@@ -113,6 +123,7 @@ export async function chatStream(
     const event = JSON.parse(line);
     if (event.type === "reasoning") opts.onReasoning?.(event.text);
     if (event.type === "content") opts.onDelta(event.text);
+    if (event.type === "note") opts.onNote?.(event.text);
   };
   while (true) {
     const { done, value } = await reader.read();
@@ -163,9 +174,12 @@ export const api = {
   saveSettings: (patch: Record<string, unknown>) => jsonFetch<EchoSettings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
   createPreset: (p: { name: string; url: string; apiKey?: string; model?: string; activate?: boolean }) =>
     jsonFetch<EchoSettings>("/api/presets", { method: "POST", body: JSON.stringify(p) }),
-  updatePreset: (id: string, p: { name?: string; url?: string; apiKey?: string; model?: string; activate?: boolean }) =>
+  updatePreset: (id: string, p: { name?: string; url?: string; apiKey?: string; model?: string; activate?: boolean; thinking?: Partial<ThinkingSettings> }) =>
     jsonFetch<EchoSettings>(`/api/presets/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(p) }),
   deletePreset: (id: string) => jsonFetch<EchoSettings>(`/api/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** 思考设置预览：后端算出「最终会加到请求里的参数」，和聊天时同一个函数 */
+  previewThinking: (body: { thinking: Partial<ThinkingSettings>; provider: string; model?: string }) =>
+    jsonFetch<ThinkingPlan>("/api/settings/thinking-preview", { method: "POST", body: JSON.stringify(body) }),
   testConnection: () => jsonFetch<{ ok: boolean; message: string }>("/api/settings/test", { method: "POST" }),
   listChatModels: (draft: ChatModelDraft) =>
     jsonFetch<{ models: string[] }>("/api/settings/chat-models", { method: "POST", body: JSON.stringify(draft) }),

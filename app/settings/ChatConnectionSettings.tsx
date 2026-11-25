@@ -5,6 +5,7 @@ import { SettingsDrawer } from "@/components/Chrome";
 import { api, type EchoSettings } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import MemoryModelSettingsSection from "./MemoryModelSettings";
+import ThinkingSettingsSection, { type ThinkTarget } from "./ThinkingSettings";
 
 const OFFICIAL = {
   openai: { name: "OpenAI", url: "https://api.openai.com/v1", suggestedModel: "gpt-4o-mini" },
@@ -388,6 +389,13 @@ export default function ChatConnectionSettings() {
           <InlineStatus value={settingsStatus} />
         </div>
       </SettingsDrawer>
+      {config && (
+        <ThinkingSettingsSection config={config} onSaved={(next) => setConfig(next)}
+          targets={connections.filter((c) => c.kind === "custom" || c.keyMask || connectionIsCurrent(c, config)).map((c): ThinkTarget => ({
+            key: connectionId(c), name: c.name, kind: c.kind, provider: c.kind === "official" ? c.provider : "custom",
+            id: c.kind === "custom" ? c.id : undefined, model: c.model, current: connectionIsCurrent(c, config),
+          }))} />
+      )}
       <MemoryModelSettingsSection owner={config?.memoryOwner ?? (config ? "echo" : undefined)}
         sereinSettingsUrl={config?.sereinSettingsUrl} />
     </>

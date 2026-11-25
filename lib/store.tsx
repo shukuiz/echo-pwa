@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { seedFiles, seedMemory, seedMessages, seedReminders } from "./mock";
-import { api, ECHO_AUTH_ENABLED, type MemoryExtra } from "./api";
+import { api, ECHO_AUTH_ENABLED, type MemoryExtra, type ThinkingSettings } from "./api";
 
 export type Role = "user" | "echo";
 export type Card =
@@ -19,6 +19,8 @@ export type Msg = {
   status?: "streaming" | "done" | "error" | "stopped";
   errorMessage?: string;
   reasoning?: string;
+  /** 后端的小提示（比如思考参数被接口拒绝后已去掉重试） */
+  note?: string;
   at: number;
   card?: Card;
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
@@ -47,7 +49,7 @@ export type Reminder = {
 };
 
 export type Hand = "codex" | "claude";
-export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string; model?: string };
+export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string; model?: string; thinking?: ThinkingSettings };
 export type Settings = {
   apiKey: string;
   apiMode: "official" | "custom";
@@ -174,6 +176,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             role: m.role,
             text: m.text ?? "",
             reasoning: typeof m.reasoning === "string" ? m.reasoning : undefined,
+            note: typeof m.note === "string" ? m.note : undefined,
             status: (m.status === "streaming" ? "stopped" : m.status ?? "done") as Msg["status"],
             at: m.at ?? Date.now(),
           })),
