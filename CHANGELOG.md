@@ -22,6 +22,14 @@ App 里的「更新公告」（设置 → 关于 → 更新公告）和这里是
 
 技术细节：Service Worker 缓存 `echo-v11`（`echo-v10` 已被 v0.9.1 用掉）；后端新增 `backend/src/codex.js`（常驻 `codex app-server`，JSON-RPC over stdio，echo 自己的实现）、`backend/src/routes/codex.js`（`GET /api/codex/status`、`GET /api/codex/models`、`POST /api/codex/thread/reset`、`POST /api/codex/login`、`POST /api/codex/login/cancel`、`GET/PUT /api/manual`、`POST /api/manual/reset`）；设置新增 `apiMode: "codex"` 和 `codex: { model, effort, showThinking }`；对话 id 存在 `data/memory/settings/codex-thread.json`。部署说明见 `backend/README.md` 的「Codex 连接」。
 
+## v0.9.1 · 2026-11-25
+
+思考翻译与保持登录
+
+1. 原生思考可保存风格偏好。Cloudflare 翻译接通后，只翻译思考字段里的英文，并保存译文。
+2. Echo 移除独立检索配置和召回测试入口，记忆检索在 Serein 配置。
+3. Echo 登录记录保存到磁盘，保持设备登录 30 天。Serein 网关的对应补丁在 scripts/serein-web-session.patch，需应用后才生效。
+
 ## v0.9.0 · 2026-11-25
 
 这次更新了这些 ✿
@@ -38,9 +46,3 @@ App 里的「更新公告」（设置 → 关于 → 更新公告）和这里是
    设置 → 思考 里可以选 关 / 原生思考 / 强制思考；强制思考的提示词就摆在那里，想怎么改都行。思考过程在回复上方，可以默认展开或折叠，不会被带进下一轮
 
 技术细节：Service Worker 缓存 `echo-v9`；后端新增 `backend/src/thinking.js`、`POST /api/settings/thinking-preview`；美化回归测试 `npm run test:beauty`（见 `scripts/beauty-save-test.py`）。
-
-## v0.9.1 · 2026-11-25
-
-1. 原生思考可保存风格偏好。Cloudflare 翻译接通后，只翻译思考字段里的英文，并保存译文。
-2. Echo 移除独立检索配置和召回测试入口，记忆检索在 Serein 配置。
-3. Echo 登录记录保存到磁盘，保持设备登录 30 天。Serein 网关的对应补丁在 scripts/serein-web-session.patch，需应用后才生效。
