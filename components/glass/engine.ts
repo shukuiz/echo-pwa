@@ -162,12 +162,9 @@ class GlassEngine {
     this.rm = !!mq?.matches;
     mq?.addEventListener?.("change", (e) => { this.rm = e.matches; this.applyClasses(); this.invalidate(); });
     // 上次开着 WebGL 没撑过 10 秒就没了：记一次失败；连续两次就一直用 CSS，直到她在美化页手动选画质
+    // 另一个还开着的页面（桌面多开标签）也会留着标记：先用 BroadcastChannel 问一声，有人回应就不算闪退
     this.guard = readGuard();
-    if (this.guard.pending) {
-      this.guard = { fails: this.guard.fails + 1, locked: this.guard.locked || this.guard.fails + 1 >= 2 };
-      writeGuard(this.guard);
-      this.fallbackReason = this.guard.locked ? "locked" : "crashed";
-    } else if (this.guard.locked) this.fallbackReason = "locked";
+    this.guardReady = this.checkGuard();
     // 正常退出（切走、关掉）不算闪退
     window.addEventListener("pagehide", this.clearPending);
     canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); this.fallbackReason = "lost"; this.note("lost"); this.useCssFallback(); });
@@ -186,19 +183,18 @@ class GlassEngine {
     fonts?.ready.then(() => this.invalidate()).catch(() => {});
     fonts?.addEventListener?.("loadingdone", () => this.invalidate());
     this.applyClasses();
-    if (this.fallbackReason) this.note(this.fallbackReason);
     if (this.wpUrl && !this.imgReady) this.setWallpaper(this.wpUrl, true);
     (window as unknown as { __echoGlass?: GlassEngine }).__echoGlass = this; // 调试/自动化测试用：读帧数、模式
   }
 
   /** 需要时才建 WebGL（选了省电 / 被保险拦下就不建） */
   private ensureGL() {
-    if (this.gl || this.glTried || !this.canvas || this.quality === "css" || this.guard.locked || this.fallbackReason === "crashed") return;
+    if (!this.guardChecked || this.gl || this.glTried || !this.canvas || this.quality === "css" || this.guard.locked || this.fallbackReason === "crashed") return;
     this.glTried = true;
     const canvas = this.canvas;
     let gl: WebGLRenderingContext | null = null;
     // 先记标记再建：真闪退时这个标记会留到下次打开
-    this.guard = { ...this.guard, pending: Date.now() };
+    this.guard = { ...readGuard(), ...this.guard, pending: Date.now() };
     writeGuard(this.guard);
     clearTimeout(this.stableTimer);
     this.stableTimer = window.setTimeout(() => { this.guard = { fails: 0 }; writeGuard(this.guard); }, GUARD_STABLE_MS);
@@ -229,6 +225,32 @@ class GlassEngine {
     if (!this.gl) this.clearPending();
     if (this.img && this.imgReady) this.uploadTexture(this.img);
     this.applyClasses(); this.resize(); this.invalidate();
+  }
+  private guardReady: Promise<void> | null = null;
+  private guardChecked = false;
+  private channel: BroadcastChannel | null = null;
+  private async checkGuard() {
+    try { this.channel = new BroadcastChannel(GUARD_KEY); } catch {}
+    // 别的页面问「标记是你的吗」：是自己的就回一声
+    if (this.channel) this.channel.onmessage = (e) => { if (e.data?.ping && this.guard.pending && e.data.ping === this.guard.pending) this.channel?.postMessage({ pong: this.guard.pending }); };
+    const pending = this.guard.pending;
+    if (pending) {
+      const alive = await new Promise<boolean>((resolve) => {
+        if (!this.channel) return resolve(false);
+        const t = setTimeout(() => resolve(false), 400);
+        const prev = this.channel.onmessage;
+        this.channel.onmessage = (e) => { if (e.data?.pong === pending) { clearTimeout(t); resolve(true); } prev?.call(this.channel!, e); };
+        this.channel.postMessage({ ping: pending });
+      });
+      if (!alive) {
+        this.guard = { fails: this.guard.fails + 1, locked: this.guard.locked || this.guard.fails + 1 >= 2 };
+        writeGuard(this.guard);
+        this.fallbackReason = this.guard.locked ? "locked" : "crashed";
+      } else this.guard = { ...this.guard, pending: undefined }; // 是别的页面的，不动它
+    } else if (this.guard.locked) this.fallbackReason = "locked";
+    this.guardChecked = true;
+    if (this.fallbackReason) this.note(this.fallbackReason as "crashed" | "locked");
+    if (this.look?.theme === "glass") this.ensureGL();
   }
   private clearPending = () => {
     if (!this.guard.pending) return;

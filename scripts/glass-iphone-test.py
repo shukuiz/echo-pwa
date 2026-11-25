@@ -8,7 +8,9 @@ URL = os.environ.get("ECHO_URL", "http://localhost:3100")
 SEEN = "localStorage.setItem('echo-seen-version','9.9.9');"
 
 async def fresh(p, init=""):
-    br = await p.webkit.launch()
+    # 沙盒里可能有代理环境变量：本机地址不走代理
+    env = {**os.environ, **{k: "" for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")}, "NO_PROXY": "*", "no_proxy": "*"}
+    br = await p.webkit.launch(env=env)
     ctx = await br.new_context(**p.devices["iPhone 13"], service_workers="block")
     await ctx.add_init_script(SEEN + init)
     await ctx.route("**/api/auth/session", lambda r: r.fulfill(json={"authenticated": True}))
