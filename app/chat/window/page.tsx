@@ -137,7 +137,7 @@ export default function WindowSwitchPage() {
               {items.map((it) => (
                 <div key={it.id + it.section} className="pvi">
                   <b>{it.kind === "raw" ? (it.role === "user" ? "她" : "echo") + (it.createdAt ? ` · ${it.createdAt}` : "") : it.title}</b>
-                  <p>{it.body.length > 260 ? it.body.slice(0, 260) + "…" : it.body}</p>
+                  <p>{(() => { const t = it.body.replace(/^#{1,6}\s+/gm, "").replace(/\n{3,}/g, "\n\n"); return t.length > 260 ? t.slice(0, 260) + "…" : t; })()}</p>
                 </div>
               ))}
             </details>

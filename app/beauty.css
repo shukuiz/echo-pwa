@@ -543,3 +543,5 @@ html.dark .ulead { color: var(--hl-text-l); }
 .gsheet .pickr.on { box-shadow: inset 0 0 0 2px var(--hl); }
 .gsheet .pickr .ck { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #eef1f5; color: var(--hl-deep); font-weight: 700; }
 .chat-shell .winbtn { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: 999px; font-size: 14px; flex-shrink: 0; }
+.winpage .stepper input { -moz-appearance: textfield; appearance: textfield; }
+.winpage .stepper input::-webkit-outer-spin-button, .winpage .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
