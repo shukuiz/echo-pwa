@@ -17,7 +17,21 @@ export type ThinkEffort = "minimal" | "low" | "medium" | "high";
 export type ThinkingSettings = { nativeStyle?: string; mode: ThinkMode; format: ThinkFormat; effort: ThinkEffort; budget: number; extra: string; cotPrompt: string };
 export type ThinkingPlan = { mode: ThinkMode; format: Exclude<ThinkFormat, "auto">; extras: Record<string, unknown>; systemAppend: string; defaults: ThinkingSettings };
 
+// ---------- Codex（ChatGPT 订阅，后端 backend/src/codex.js） ----------
+export type CodexEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type CodexSettings = { model: string; effort: CodexEffort; showThinking: boolean };
+export type CodexModel = { id: string; name: string; description: string; efforts: CodexEffort[]; defaultEffort: string; isDefault: boolean; images: boolean };
+export type CodexLogin = { loginId: string; url: string; code: string; startedAt: number; error?: string };
+export type CodexStatus = {
+  installed: boolean; alive: boolean; loggedIn: boolean; busy: boolean;
+  account: { type: string; email: string; planType: string } | null;
+  hasThread: boolean; threadStartedAt: number; agentsChanged: boolean;
+  mcp: Record<string, { status: string; error: string }>; login: CodexLogin | null; error: string;
+};
+export type ManualFile = { content: string; defaultContent?: string; savedAt?: number };
+
 export type EchoSettings = Omit<Settings, "apiKey"> & {
+  codex?: CodexSettings;
   thoughtTranslationReady?: boolean;
   officialModels?: Record<string, string>;
   officialThinking?: Record<string, ThinkingSettings>;
@@ -188,6 +202,18 @@ export const api = {
     jsonFetch<{ models: string[] }>("/api/settings/chat-models", { method: "POST", body: JSON.stringify(draft) }),
   // 拉取模型列表（走后端 /models，可选搜索）
   getModels: (q?: string) => jsonFetch<{ models: string[]; error?: string; message?: string }>(`/api/models${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+
+  // Codex（ChatGPT 订阅）
+  codexStatus: () => jsonFetch<CodexStatus>("/api/codex/status", { cache: "no-store" }),
+  codexModels: () => jsonFetch<{ models: CodexModel[] }>("/api/codex/models", { cache: "no-store" }),
+  codexResetThread: () => jsonFetch<{ ok: true }>("/api/codex/thread/reset", { method: "POST" }),
+  codexLogin: () => jsonFetch<{ loggedIn: boolean } & Partial<CodexLogin>>("/api/codex/login", { method: "POST" }),
+  codexCancelLogin: () => jsonFetch<{ ok: true }>("/api/codex/login/cancel", { method: "POST" }),
+
+  // 说明书（echo 的 AGENTS.md）
+  getManual: () => jsonFetch<ManualFile>("/api/manual", { cache: "no-store" }),
+  saveManual: (content: string) => jsonFetch<ManualFile>("/api/manual", { method: "PUT", body: JSON.stringify({ content }) }),
+  resetManual: () => jsonFetch<ManualFile>("/api/manual/reset", { method: "POST" }),
 
   // 记忆
   getMemoryModels: () => jsonFetch<MemoryModelConfig>("/api/settings/memory-models", { cache: "no-store" }),

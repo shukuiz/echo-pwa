@@ -4,6 +4,7 @@ import { getConfig, authHeaders } from "../config.js";
 import { buildSystemPrompt } from "../prompt.js";
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
 import { planThinking, ThinkSplitter, stripThink, shouldRetryWithoutThinking } from "../thinking.js";
+import { codexBridge, gentleCodexError } from "../codex.js";
 
 const MAX_HISTORY = 20;
 const MAX_DELETE = 500;
@@ -82,6 +83,7 @@ export default async function chatRoute(app) {
   // 新版客户端接收 NDJSON，旧版继续接收纯文本。
   app.post("/api/chat", async (req, reply) => {
     const cfg = await getConfig();
+    if (cfg.apiMode === "codex") return codexChat(req, reply, cfg);
     if (!cfg.apiKey) {
       reply.code(400);
       return { error: "no_key", message: "后端还没有设置 API Key，请先到设置页保存" };
@@ -320,4 +322,130 @@ export default async function chatRoute(app) {
     }
 
   });
+}
+
+/** 存一条用户消息（和普通接口同一套规则：重新生成 / 已存在的 id 不重复存） */
+async function saveUserMessage({ incoming, userId, regenerate }) {
+  try {
+    const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+    const lastUser = incoming[incoming.length - 1];
+    if (lastUser && lastUser.role === "user" && !regenerate && !(userId && chat.messages.some((m) => m.id === userId))) {
+      chat.messages.push({ id: userId || uid(), role: "user", text: lastUser.text, at: Date.now() });
+      await writeJSON(paths.chat(DATA_DIR), chat);
+    }
+  } catch {}
+}
+
+/**
+ * Codex（ChatGPT 订阅）：只把这一轮的新消息交给常驻的 codex app-server，
+ * Codex 自己保管对话上下文；echo 的 chat.json 仍然记一份，用来显示历史。
+ */
+async function codexChat(req, reply, cfg) {
+  const body = req.body || {};
+  const structured = body.streamFormat === "ndjson";
+  const ids = body.ids && typeof body.ids === "object" ? body.ids : {};
+  const userId = clientId(ids.user);
+  const replyId = clientId(ids.echo);
+  const regenerate = body.regenerate === true;
+  const incoming = Array.isArray(body.messages) ? body.messages : [];
+  const lastUser = [...incoming].reverse().find((m) => m?.role === "user");
+  const text = String(lastUser?.text ?? lastUser?.content ?? "").slice(0, 64_000);
+  const images = Array.isArray(lastUser?.images) ? lastUser.images.slice(0, 4) : [];
+  if (!text.trim() && !images.length) {
+    reply.code(400);
+    return { error: "bad_input", message: "要先说点什么呀" };
+  }
+  const bridge = codexBridge();
+  if (bridge.busy) {
+    reply.code(409);
+    return { error: "codex_busy", message: "上一条还在回复中，等它说完再发吧" };
+  }
+  const settings = cfg.codex || {};
+  const showThinking = settings.showThinking !== false;
+
+  await saveUserMessage({ incoming, userId, regenerate });
+
+  let headersSent = false;
+  const sendHeaders = () => {
+    if (headersSent) return;
+    headersSent = true;
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      ...reply.getHeaders(),
+      "Content-Type": structured ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+  };
+  const write = (type, chunk) => {
+    if (reply.raw.destroyed) return;
+    sendHeaders();
+    if (structured) reply.raw.write(JSON.stringify({ type, text: chunk }) + "\n");
+    else if (type === "content") reply.raw.write(chunk);
+  };
+
+  let fullText = "";
+  let reasoning = "";
+  let stopped = false;
+  const onClose = () => {
+    if (reply.raw.writableFinished) return;
+    stopped = true;
+    bridge.interrupt().catch(() => {});
+  };
+  reply.raw.on("close", onClose);
+
+  let result;
+  try {
+    result = await bridge.runTurn({
+      text, images, regenerate,
+      cfg: { model: settings.model, effort: settings.effort, showThinking },
+      handlers: {
+        onContent: (t) => { fullText += t; write("content", t); },
+        onThought: (t) => { if (!showThinking) return; reasoning += t; write("reasoning", t); },
+      },
+    });
+  } catch (e) {
+    result = { status: "failed", error: e.message, code: e.code };
+  } finally {
+    reply.raw.off("close", onClose);
+  }
+  if (result.status === "interrupted") stopped = true;
+  const failed = result.status === "failed" || (!fullText && !stopped && result.error);
+  const message = failed ? (result.code === "busy" ? result.error : gentleCodexError(result.error)) : "";
+  const note = result.note || "";
+  if (note && !failed) write("note", note);
+
+  let reasoningOriginal;
+  if (reasoning && !stopped && !failed) {
+    try {
+      const translated = await translateThought(reasoning);
+      if (translated) { reasoningOriginal = reasoning; reasoning = translated; write("reasoning_translated", translated); }
+    } catch {}
+  }
+  try {
+    if (fullText || reasoning) {
+      const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+      const id = replyId && !chat.messages.some((m) => m.id === replyId) ? replyId : uid();
+      chat.messages.push({
+        id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), ...(reasoningOriginal ? { reasoningOriginal } : {}),
+        ...(note ? { note } : {}), via: "codex", at: Date.now(), status: stopped ? "stopped" : failed ? "error" : "done",
+      });
+      await writeJSON(paths.chat(DATA_DIR), chat);
+    }
+  } catch {}
+
+  if (failed && !headersSent && !stopped) {
+    reply.code(result.code === "busy" ? 409 : 502);
+    return reply.send({ error: "codex", message });
+  }
+  if (failed && !stopped) {
+    write("note", message);
+    reply.raw.destroy(new Error(message));
+    return;
+  }
+  if (!reply.raw.destroyed) {
+    sendHeaders();
+    reply.raw.end();
+  }
 }

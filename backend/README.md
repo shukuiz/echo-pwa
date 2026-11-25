@@ -121,3 +121,21 @@ NEXT_PUBLIC_ECHO_API=http://<altare-ip>:8787
 2. 设置页填 Key（或本地代理地址）后能真聊天，流式逐字、可停止、可重试。
 3. 改一条记忆，下一条回复就用上。
 4. 刷新/重启后端，聊天记录与记忆不丢，可导出备份。
+
+## Codex 连接（ChatGPT 订阅）
+
+设置 → 聊天连接 → 「Codex（ChatGPT 订阅）」。后端用 `backend/src/codex.js` 常驻一个 `codex app-server`（stdio JSON-RPC），这是 echo 自己按 Codex app-server 协议写的实现。
+
+- 一条长期对话：对话 id 存在 `data/memory/settings/codex-thread.json`；每条消息只把新的用户消息发给 Codex，Codex 自己保管上下文。「新对话」清掉 id，下一条消息开新对话。
+- 只读：`cwd` = 数据目录（Codex 读同一份 `AGENTS.md`），`sandbox: read-only`、`approvalPolicy: never`；Codex 想执行命令或改文件时一律拒绝。
+- `AGENTS.md` 只在开新对话时被 Codex 读取（已在 codex-cli 0.172.0 上验证），改完说明书要开新对话。
+- 开发者说明里附带 `about-you.md` / `about-us.md` 的有效内容（同样只在开新对话时带入）；`store.json` 记忆不注入，记忆交给 Serein MCP。
+- 停止 = `turn/interrupt`；重新生成 = `thread/revert` 掉上一轮再重新问。
+
+服务器准备：
+
+1. `npm i -g @openai/codex`，`apt install bubblewrap`，Ubuntu 24.04 还需 `kernel.apparmor_restrict_unprivileged_userns=0`（写进 `/etc/sysctl.d/60-userns.conf`）。
+2. 用后端服务的同一个系统用户登录：`codex login --device-auth`，或在 App 里点「登录 ChatGPT」。凭据在该用户的 `~/.codex`（或 `CODEX_HOME`）。
+3. Serein 记忆（可选）：`codex mcp add serein --url http://127.0.0.1:18217/serein/mcp --bearer-token-env-var SEREIN_MCP_TOKEN`，并在 `~/.codex/config.toml` 的 `[mcp_servers.serein]` 里加 `default_tools_approval_mode = "approve"`。在后端 `.env` 里设 `ECHO_CODEX_SEREIN_TOKEN_FILE=/root/companion/serein/deploy/secrets/api-token`，后端启动 Codex 时从这个文件读 Gateway Key 放进 `SEREIN_MCP_TOKEN`，Key 不写进 config.toml。
+
+可选环境变量：`ECHO_CODEX_BIN`（codex 路径，默认 `codex`）、`ECHO_CODEX_ARGS`（附加给 `codex app-server` 的参数，空格分隔，例如 `--disable apps`）、`CODEX_HOME`。

@@ -1,10 +1,21 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.9.1";
+export const APP_VERSION = "0.10.0";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.10.0", date: "2026-11-25", title: "用 ChatGPT 订阅和 echo 聊天 ✿",
+    items: [
+      { t: "新的聊天连接：Codex（ChatGPT 订阅）", d: "设置 → 聊天连接 里多了一个「Codex（ChatGPT 订阅）」。选它以后，echo 通过服务器上的 Codex 用你的 ChatGPT 订阅回复，不用再填 API Key；可以选模型、思考强度，要不要显示思考" },
+      { t: "Codex 记得住这段对话", d: "Codex 自己保管对话上下文，每次只把你新说的那句交给它。想让它从头开始，点「新对话」就好，echo 里的聊天记录不会删" },
+      { t: "思考、停止、重新生成都能用", d: "Codex 的思考摘要会放进回复上方的「思考」里；点停止会马上让 Codex 停下；重新生成会先撤掉上一轮再重新问" },
+      { t: "记忆走 Serein", d: "Codex 可以用 Serein 查记忆、记下重要的事，设置里能看到 Serein 有没有接上" },
+      { t: "说明书可以在 App 里改了", d: "设置 → 说明书：直接查看、修改、保存 echo 的说明书，也能一键恢复默认。普通接口下一条消息就生效；Codex 要开新对话才会读到新版，保存后会问你要不要开" },
+      { t: "在 App 里登录 ChatGPT", d: "Codex 没登录时，编辑连接里点「登录 ChatGPT」，拿到一次性码去网页输入就行，密码不经过 echo" },
+    ],
+  },
   {
     version: "0.9.1", date: "2026-11-25", title: "思考翻译与保持登录",
     items: [

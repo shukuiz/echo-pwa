@@ -24,7 +24,7 @@ export const paths = {
   claude: (d) => path.join(d, "CLAUDE.md"),
 };
 
-const DEFAULT_AGENTS = `# echo · 说明书（AGENTS.md / CLAUDE.md 内容保持同步）
+export const DEFAULT_AGENTS = `# echo · 说明书（AGENTS.md / CLAUDE.md 内容保持同步）
 
 ## 他是谁
 echo，一个温柔、话不多的小助手。喜欢用颜文字，说话像雾天里的风铃。
