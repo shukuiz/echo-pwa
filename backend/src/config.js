@@ -2,6 +2,7 @@
 import { randomBytes } from "node:crypto";
 import { paths, readJSON, writeJSON, DATA_DIR } from "./storage.js";
 import { DEFAULT_THINKING, normThinking } from "./thinking.js";
+import { DEFAULT_CODEX, normCodex } from "./codex.js";
 
 // 官方接口地址：官方 API 模式下固定使用，不需要用户填写
 // Anthropic 走官方 OpenAI 兼容层（https://api.anthropic.com/v1/），复用同一套 /chat/completions 转发
@@ -14,7 +15,8 @@ export const OFFICIAL_PROVIDERS = Object.keys(OFFICIAL_BASES);
 const MAX_PRESETS = 20;
 
 const DEFAULT_CONFIG = {
-  apiMode: "official", // official | custom
+  apiMode: "official", // official | custom | codex（ChatGPT 订阅，走服务器上的 codex app-server）
+  codex: { ...DEFAULT_CODEX }, // Codex 连接：{ model, effort, showThinking }
   provider: "openai", // 官方模式下的厂商：openai | deepseek | anthropic
   officialKeys: {}, // { openai: "sk-…", deepseek: "…", anthropic: "…" } 各官方 Key 分开保存，切换不丢
   officialModels: {},
@@ -64,11 +66,12 @@ function migrate(raw) {
 export async function getRawConfig() {
   const raw = await readJSON(paths.config(DATA_DIR), {});
   const stored = migrate(raw);
-  return { ...DEFAULT_CONFIG, ...stored, officialKeys: { ...stored.officialKeys }, officialModels: { ...stored.officialModels }, officialThinking: { ...stored.officialThinking }, presets: stored.presets || [] };
+  return { ...DEFAULT_CONFIG, ...stored, officialKeys: { ...stored.officialKeys }, officialModels: { ...stored.officialModels }, officialThinking: { ...stored.officialThinking }, presets: stored.presets || [], codex: normCodex(stored.codex) };
 }
 
 /** 当前生效的上游：官方厂商或选中的自定义预设 */
 export function activeUpstream(raw) {
+  if (raw.apiMode === "codex") return { kind: "codex", proxyUrl: "", apiKey: "" };
   if (raw.apiMode === "custom") {
     const preset = raw.presets.find((p) => p.id === raw.activePresetId);
     return { kind: "custom", preset, proxyUrl: preset ? normBase(preset.url) : "", apiKey: preset?.apiKey || "" };
@@ -108,8 +111,9 @@ function updateConfig(change) {
 }
 
 function setActiveModel(config, model) {
-  config.model = model;
   const { kind, preset } = activeUpstream(config);
+  if (kind === "codex") return; // Codex 的模型单独存在 config.codex.model
+  config.model = model;
   if (preset) preset.model = model;
   else if (kind !== "custom") config.officialModels[kind] = model;
   if (model && !config.models.includes(model)) config.models = [model, ...config.models];
@@ -132,7 +136,8 @@ export async function applySettingsPatch(body) {
     const previous = activeUpstream(next);
     const official = body.officialConnection;
 
-    if (body.apiMode === "official" || body.apiMode === "custom") next.apiMode = body.apiMode;
+    if (body.apiMode === "official" || body.apiMode === "custom" || body.apiMode === "codex") next.apiMode = body.apiMode;
+    if (body.codex !== undefined) next.codex = normCodex(body.codex, next.codex);
     if (OFFICIAL_PROVIDERS.includes(body.provider)) next.provider = body.provider;
     if (typeof body.activePresetId === "string") {
       if (body.activePresetId && !next.presets.some((p) => p.id === body.activePresetId)) throw new Error("连接不存在");
@@ -168,7 +173,7 @@ export async function applySettingsPatch(body) {
     const switched = previous.kind !== active.kind || previous.preset?.id !== active.preset?.id;
     if (switched) {
       if (previous.preset) previous.preset.model ||= next.model;
-      else if (previous.kind !== "custom") next.officialModels[previous.kind] ||= next.model;
+      else if (previous.kind !== "custom" && previous.kind !== "codex") next.officialModels[previous.kind] ||= next.model;
     }
     if (switched || typeof body.model === "string" || official?.provider === active.kind) {
       setActiveModel(next, typeof body.model === "string" ? body.model : configuredModel(next) || next.model);
@@ -308,6 +313,9 @@ function memoryManagement(upstream, env = process.env) {
 export function publicConfig(raw) {
   const up = activeUpstream(raw);
   const { officialKeys, presets, ...rest } = raw;
+  const codex = normCodex(raw.codex);
+  // Codex 模式下，聊天页顶部显示的是 Codex 的模型
+  if (up.kind === "codex") Object.assign(rest, { model: codex.model || "Codex 默认模型", models: [codex.model || "Codex 默认模型"] });
   delete rest.apiKey;
   delete rest.proxyUrl;
   return {
@@ -322,7 +330,8 @@ export function publicConfig(raw) {
       thinking: { ...DEFAULT_THINKING, ...(p.thinking || {}) },
     })),
     officialThinking: Object.fromEntries(OFFICIAL_PROVIDERS.map((p) => [p, { ...DEFAULT_THINKING, ...(raw.officialThinking?.[p] || {}) }])),
-    hasKey: !!up.apiKey,
+    codex,
+    hasKey: up.kind === "codex" || !!up.apiKey,
     apiKeyMask: maskKey(up.apiKey),
     thoughtTranslationReady: Boolean(process.env.ECHO_CF_ACCOUNT_ID && process.env.ECHO_CF_TRANSLATE_TOKEN),
     ...memoryManagement(up),
