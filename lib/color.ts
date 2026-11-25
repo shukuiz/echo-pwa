@@ -29,12 +29,12 @@ export function inkSet(ink: "d" | "l", a: number, glassy: boolean): Record<strin
     "--g-ink": d ? DARK : "#fbfdff",
     "--g-mute": d ? "rgba(38,48,61,.66)" : "rgba(245,249,255,.82)",
     "--g-tsh": d ? (soft ? "0 0 6px rgba(255,255,255,.55)" : "none") : glassy ? "0 1px 6px rgba(20,40,70,.42)" : soft ? "0 1px 3px rgba(10,20,35,.42)" : "none",
-    "--g-rose": d ? "#b42652" : "#ffc6d6",
+    "--g-rose": d ? "var(--hl-text-d)" : "var(--hl-text-l)",
     "--g-chip": d ? "rgba(38,48,61,.09)" : "rgba(255,255,255,.2)",
     "--g-chipon": d ? DARK : "rgba(255,255,255,.92)",
     "--g-chiponink": d ? "#fff" : "#4f7393",
-    "--g-tdbg": d ? "#c42d5a" : "#ffc2d3",
-    "--g-tdink": d ? "#fff" : "#5a1730",
+    "--g-tdbg": "var(--hl)",
+    "--g-tdink": "var(--hl-ink)",
   };
 }
 
@@ -95,4 +95,64 @@ export class Sampler {
   bands(r: { left: number; top: number; width: number; height: number }): RGB[] {
     return [0, 1, 2].map((i) => this.region(r.left, r.top + (i * r.height) / 3, r.width, r.height / 3));
   }
+}
+
+// ---------- 重点色家族：一个重点色派生出一整套同色系的颜色（统一但不单调） ----------
+export type HSL = [number, number, number];
+export const rgb2hex = (c: RGB) => "#" + c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
+export function rgb2hsl([r, g, b]: RGB): HSL {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l * 100];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s * 100, l * 100];
+}
+export function hsl2rgb([h, s, l]: HSL): RGB {
+  s = Math.max(0, Math.min(100, s)) / 100; l = Math.max(0, Math.min(100, l)) / 100; h = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+}
+/** 压在这个底色上的字：深字还是白字，挑对比度高的那个 */
+export const inkOn = (c: RGB) => (contrast(c, [23, 20, 23]) >= contrast(c, [255, 255, 255]) ? "#171417" : "#ffffff");
+/** 沿亮度一步步走，直到和底色对比度够（4.5:1），走到头就用最后一步 */
+function reach(hsl: HSL, bg: RGB, dir: 1 | -1, target = 4.5): RGB {
+  let [h, s, l] = hsl;
+  for (let i = 0; i < 40; i++) {
+    const c = hsl2rgb([h, s, l]);
+    if (contrast(c, bg) >= target) return c;
+    l += dir * 2.5;
+    if (l <= 4 || l >= 97) break;
+  }
+  return hsl2rgb([h, s, Math.max(4, Math.min(97, l))]);
+}
+const LIGHT_BG: RGB = [243, 246, 250]; // 浅玻璃 / 仿真浅底
+const DARK_BG: RGB = [38, 48, 61];     // 深壁纸 / 深色玻璃
+
+/**
+ * 重点色家族（CSS 变量名 → 值）：
+ * --hl 本色 / --hl-deep 深一阶 / --hl-soft 浅底 / --hl-alt 邻近色相（±22°，做点变化）/ --hl-glow 阴影光晕
+ * --hl-ink 等：压在对应底色上的字色；--hl-text-d / --hl-text-l：浅底、深底上当文字用时保证 4.5:1 的版本
+ */
+export function accentFamily(hex: string): Record<string, string> {
+  const base = hex2rgb(hex), [h, s, l] = rgb2hsl(base);
+  const warm = h < 60 || h >= 300; // 暖色往黄偏一点，冷色往紫偏一点，都还是同一家
+  const deep = hsl2rgb([h, Math.min(100, s + 4), Math.max(Math.min(l, 12), l - 14)]);
+  const soft = hsl2rgb([h, Math.min(70, s * 0.75 + 10), 92]);
+  const alt = hsl2rgb([h + (warm ? 22 : -22), Math.min(100, s + 8), Math.min(76, Math.max(40, l + 6))]);
+  const alt2 = hsl2rgb([h + (warm ? -16 : 16), Math.max(20, s - 6), Math.min(80, Math.max(40, l + 8))]);
+  const tD = reach([h, s, Math.min(l, 60)], LIGHT_BG, -1);
+  const tL = reach([h, Math.min(100, s + 6), Math.max(l, 62)], DARK_BG, 1);
+  const glow = (a: number) => `rgba(${base.map(Math.round).join(",")},${a})`;
+  return {
+    "--hl": rgb2hex(base), "--hl-rgb": base.map(Math.round).join(" "),
+    "--hl-ink": inkOn(base),
+    "--hl-deep": rgb2hex(deep), "--hl-deep-ink": inkOn(deep),
+    "--hl-soft": rgb2hex(soft), "--hl-soft-ink": rgb2hex(tD),
+    "--hl-alt": rgb2hex(alt), "--hl-alt-ink": inkOn(alt),
+    "--hl-alt2": rgb2hex(alt2), "--hl-alt2-ink": inkOn(alt2),
+    "--hl-glow": glow(0.5), "--hl-glow-soft": glow(0.25),
+    "--hl-text-d": rgb2hex(tD), "--hl-text-l": rgb2hex(tL),
+  };
 }

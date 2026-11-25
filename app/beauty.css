@@ -3,11 +3,15 @@
    html 上的状态类：th-glass / th-real / mat-solid / tintme / nog / wall-on / wall-gl / f-song / f-ipa
    引擎写的属性：data-cssg（这块走 CSS 毛玻璃）、data-ink="d|l"（深/浅字） */
 :root {
-  --g-ink: #f7fbff; --g-mute: rgba(240,247,255,.74); --g-rose: #ffc2d3; --g-tsh: 0 1px 6px rgba(20,40,70,.42);
+  /* 重点色家族：默认值 = DEFAULT_ACCENT 派生的结果（lib/color.ts accentFamily），JS 加载后按设置覆盖 */
+  --hl: #b4637a; --hl-rgb: 180 99 122; --hl-ink: #171417; --hl-deep: #903f56; --hl-deep-ink: #fff; --hl-soft: #f2e3e7; --hl-soft-ink: #ab526c;
+  --hl-alt: #c67770; --hl-alt-ink: #171417; --hl-alt2: #bc84a3; --hl-alt2-ink: #171417; --hl-glow: rgba(180,99,122,.5); --hl-glow-soft: rgba(180,99,122,.25);
+  --hl-text-d: #ab526c; --hl-text-l: #cd889c;
+  --g-ink: #f7fbff; --g-mute: rgba(240,247,255,.74); --g-rose: var(--hl-text-l); --g-tsh: 0 1px 6px rgba(20,40,70,.42);
   --g-wpink: #fff; --g-wptsh: 0 1px 2px rgba(15,30,55,.7), 0 0 8px rgba(15,30,55,.6), 0 0 16px rgba(15,30,55,.35);
   --g-chip: rgba(255,255,255,.2); --g-chipon: rgba(255,255,255,.92); --g-chiponink: #4f7393;
   --g-tint: 243,246,250; --g-amt: .06; --g-fallback-blur: 3px; --g-me: 255,182,200; --g-meink: #3a2630;
-  --g-icon: 247,248,251; --g-ica: .88; --g-tdbg: #c42d5a; --g-tdink: #fff;
+  --g-icon: 247,248,251; --g-ica: .88; --g-tdbg: var(--hl); --g-tdink: var(--hl-ink);
   --g-wpimg: url("/wallpapers/default.jpg");
 }
 
@@ -56,7 +60,8 @@ html.th-glass.nog .bty .g.rim, html.th-glass .bty .g.rim[data-cssg] { box-shadow
 
 .bty [data-onwp] { color: var(--g-wpink); text-shadow: var(--g-wptsh); }
 .bty .mute { color: var(--g-mute); }
-.bty .rose { color: var(--desktop-accent, var(--g-rose)); }
+.bty .rose { color: var(--g-rose); }
+.bty a.lnk, .bty .lnk { color: var(--g-rose); text-decoration: underline; text-underline-offset: 2px; }
 .bty .cap { font-size: 12px; color: var(--g-mute); font-weight: 600; display: flex; align-items: center; gap: 5px; }
 .bty .clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .bty .clamp3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -79,7 +84,7 @@ html.th-glass.nog .bty .g.rim, html.th-glass .bty .g.rim[data-cssg] { box-shadow
 .pages { position: relative; height: 100%; transform: translate3d(0,0,0); will-change: transform; }
 .hdots { height: 22px; display: flex; justify-content: center; align-items: center; gap: 7px; flex-shrink: 0; margin-bottom: 5px; }
 .hdots i { width: 7px; height: 7px; border-radius: 50%; background: var(--g-wpink); opacity: .4; box-shadow: 0 0 4px rgba(20,40,70,.3); }
-.hdots i.on { opacity: 1; background: var(--desktop-accent, var(--g-wpink)); }
+.hdots i.on { opacity: 1; background: var(--hl); box-shadow: 0 0 0 1.5px rgba(255,255,255,.7), 0 0 6px var(--hl-glow); }
 .it { position: absolute; left: 0; top: 0; transition: transform .34s cubic-bezier(.2,.85,.25,1), opacity .2s; touch-action: pan-y; will-change: transform; }
 .editing .it { touch-action: none; }
 .it.noanim { transition: none; }
@@ -114,8 +119,9 @@ html.th-real .media { inset: 0; border-radius: inherit; }
 .phdots { position: absolute; bottom: 9px; left: 0; right: 0; display: flex; justify-content: center; gap: 4px; }
 .phdots i { width: 5px; height: 5px; border-radius: 50%; background: #fff; opacity: .5; } .phdots i.on { opacity: 1; }
 .wpad { position: absolute; inset: 0; padding: 14px; display: flex; flex-direction: column; }
-.imgink { position: absolute; inset: 0; --g-ink: #fff; --g-mute: rgba(255,255,255,.86); --g-rose: #ffd0dc; --g-tdbg: #ffc2d3; --g-tdink: #5a1730; --g-tsh: 0 1px 6px rgba(0,0,0,.5); color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
-.ava { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.26); position: relative; flex-shrink: 0; color: #ff8fab; }
+.imgink { position: absolute; inset: 0; --g-ink: #fff; --g-mute: rgba(255,255,255,.86); --g-rose: var(--hl-text-l); --g-tdbg: var(--hl); --g-tdink: var(--hl-ink); --g-tsh: 0 1px 6px rgba(0,0,0,.5); color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
+.ava { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--hl-soft); position: relative; flex-shrink: 0; color: var(--hl); text-shadow: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.5), 0 4px 10px -4px var(--hl-glow-soft); }
 .ava::after { content: ""; position: absolute; right: 1px; bottom: 1px; width: 11px; height: 11px; border-radius: 50%; background: #7fd8a6; border: 2px solid rgba(255,255,255,.95); }
 .note { flex: 1; outline: 0; font-size: 14.5px; line-height: 1.5; overflow: hidden; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
 .editing .note { -webkit-user-select: none; user-select: none; }
@@ -130,7 +136,7 @@ html.th-real .media { inset: 0; border-radius: inherit; }
 .cal { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-variant-numeric: tabular-nums; }
 .cal > span { display: grid; place-items: center; }
 .cal .wk { color: var(--g-mute); font-weight: 600; }
-.cal .td { background: var(--desktop-accent, var(--g-tdbg)); color: var(--desktop-accent-ink, var(--g-tdink)); border-radius: 50%; font-weight: 700; text-shadow: none; display: grid; place-items: center; }
+.cal .td { background: var(--hl); color: var(--hl-ink); border-radius: 50%; font-weight: 700; text-shadow: none; display: grid; place-items: center; }
 .cal .wkend { opacity: .75; display: grid; place-items: center; }
 .cal .dd { display: grid; place-items: center; }
 
@@ -196,7 +202,7 @@ html.th-real.tintme .bty .bub.me { background: rgb(var(--g-me)) !important; back
 .btgl input { position: absolute; opacity: 0; width: 0; height: 0; }
 .btgl i { width: 42px; height: 26px; border-radius: 999px; background: var(--g-chip); position: relative; flex-shrink: 0; transition: background .2s; }
 .btgl i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(18,28,45,.25); transition: transform .2s; }
-.btgl input:checked + i { background: #ff86a6; } .btgl input:checked + i::after { transform: translateX(16px); }
+.btgl input:checked + i { background: var(--hl); } .btgl input:checked + i::after { transform: translateX(16px); }
 
 /* ---------- 底部面板（CSS 磨砂，叠在小组件上方） ---------- */
 .gmask { position: fixed; inset: 0; z-index: 60; background: rgba(16,24,38,.28); }
@@ -232,7 +238,7 @@ textarea.fld { resize: none; height: 84px; line-height: 1.5; }
 .tgl input { position: absolute; opacity: 0; width: 0; height: 0; }
 .tgl i { width: 46px; height: 28px; border-radius: 999px; background: #d9dee6; position: relative; flex-shrink: 0; transition: background .2s; }
 .tgl i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(18,28,45,.25); transition: transform .2s; }
-.tgl input:checked + i { background: #ff86a6; } .tgl input:checked + i::after { transform: translateX(18px); }
+.tgl input:checked + i { background: var(--hl); } .tgl input:checked + i::after { transform: translateX(18px); }
 .gsheet .brow { font-size: 14px; } .gsheet .brow output { color: #7b8594; width: 40px; } .gsheet input[type=range] { accent-color: #26303d; flex: 1; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -274,7 +280,7 @@ textarea.fld { resize: none; height: 84px; line-height: 1.5; }
 /* ================= 美化页：保存条 ================= */
 .bpage:not(.gpage) .bscroll { padding-bottom: 16px; }
 .unsaved { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 999px; background: var(--g-chip); text-shadow: none; }
-.unsaved i, .savebar .dot { width: 7px; height: 7px; border-radius: 50%; background: #ff86a6; box-shadow: 0 0 0 3px rgba(255,134,166,.25); flex-shrink: 0; display: inline-block; }
+.unsaved i, .savebar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hl); box-shadow: 0 0 0 3px var(--hl-glow-soft); flex-shrink: 0; display: inline-block; }
 /* 保存条在滚动区外面（玻璃按 data-gclip 裁在滚动区里，叠在上面会被卡片的字盖住） */
 .savewrap { flex-shrink: 0; padding: 6px 14px max(14px, env(safe-area-inset-bottom)); position: relative; z-index: 20; }
 .savebar { --r: 28px; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; min-height: 60px; }
@@ -282,7 +288,7 @@ textarea.fld { resize: none; height: 84px; line-height: 1.5; }
 .savebar button { border: 0; cursor: pointer; border-radius: 999px; font-size: 15px; font-weight: 600; min-height: 44px; padding: 0 18px; text-shadow: none; }
 .savebar .ghost { background: var(--g-chip); color: var(--g-ink); padding: 0 14px; }
 .savebar .save { background: var(--g-chipon); color: var(--g-chiponink); min-width: 84px; transition: transform .15s, opacity .2s; }
-.savebar.on .save { background: var(--desktop-accent, #ff86a6); color: var(--desktop-accent-ink, #fff); box-shadow: 0 6px 16px -6px rgba(255,90,130,.55); }
+.savebar.on .save { background: var(--hl); color: var(--hl-ink); box-shadow: 0 6px 16px -6px var(--hl-glow); }
 .savebar .save:disabled { opacity: .55; cursor: default; }
 .savebar .save:active:not(:disabled) { transform: scale(.96); }
 .gbtn { min-height: 46px; }
@@ -305,9 +311,9 @@ html.dark .gmenu { background: rgba(40,42,50,.8); color: #eef1f6; }
 .msgrow.picked { background: rgba(255,255,255,.12); }
 .selbox { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
   border: 2px solid var(--g-wpink); color: transparent; box-shadow: 0 1px 4px rgba(15,30,55,.35); }
-.msgrow.picked .selbox { background: var(--desktop-accent, #ff86a6); border-color: var(--desktop-accent, #ff86a6); color: var(--desktop-accent-ink, #fff); }
+.msgrow.picked .selbox { background: var(--hl); border-color: var(--hl); color: var(--hl-ink); }
 .msgrow.flash .bub { animation: flash 1.4s ease; }
-@keyframes flash { 0%, 60% { box-shadow: 0 0 0 3px rgba(255,134,166,.85); } 100% { box-shadow: none; } }
+@keyframes flash { 0%, 60% { box-shadow: 0 0 0 3px var(--hl-glow); } 100% { box-shadow: none; } }
 .selbar { padding: 10px 10px 8px; }
 .selhead { display: grid; grid-template-columns: 1fr auto auto; grid-template-areas: "n all x" "r r r"; align-items: center; gap: 6px; }
 .selhead b { grid-area: n; font-size: 14px; padding-left: 4px; }
@@ -360,7 +366,7 @@ html.dark .gmenu { background: rgba(40,42,50,.8); color: #eef1f6; }
 .meta { font-size: 11.5px; padding-right: 136px; min-height: 18px; }
 .memacts { position: absolute; right: 6px; bottom: 2px; display: flex; gap: 2px; }
 .memacts button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: none; color: inherit; display: grid; place-items: center; cursor: pointer; opacity: .65; }
-.memacts button.on { opacity: 1; color: var(--desktop-accent, var(--g-rose)); }
+.memacts button.on { opacity: 1; color: var(--g-rose); }
 .recall .rq { display: flex; gap: 8px; }
 .recall input { flex: 1; min-width: 0; border: 0; outline: 0; border-radius: 14px; padding: 0 12px; min-height: 44px; font-size: 16px; background: var(--g-chip); color: inherit; text-shadow: none; }
 .recall input::placeholder { color: var(--g-mute); }
@@ -370,7 +376,7 @@ html.dark .gmenu { background: rgba(40,42,50,.8); color: #eef1f6; }
 .hits { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .hit { display: flex; flex-direction: column; gap: 4px; text-align: left; border: 0; background: var(--g-chip); color: inherit; border-radius: 16px; padding: 10px 12px; cursor: pointer; text-shadow: none; }
 .hit .ht { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
-.score { display: flex; align-items: center; gap: 8px; } .score i { display: block; height: 5px; border-radius: 3px; background: var(--desktop-accent, #ff86a6); max-width: 70%; }
+.score { display: flex; align-items: center; gap: 8px; } .score i { display: block; height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--hl), var(--hl-alt2)); max-width: 70%; }
 .score b { font-size: 12px; font-variant-numeric: tabular-nums; }
 .linkcard { display: flex !important; align-items: center; gap: 8px; font-size: 14px; min-height: 52px; }
 .memsheet .fld.big { height: 140px; }

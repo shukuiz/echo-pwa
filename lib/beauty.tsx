@@ -6,6 +6,7 @@
 // 美化页用「草稿」：改动立刻预览，点「保存」才落盘；桌面编辑、设置页的重点色仍是自动保存。
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { accentFamily } from "./color";
 
 export type ThemeKind = "glass" | "real";
 export type WidgetType = "clock" | "photo" | "echo" | "remind" | "note" | "calendar" | "countdown" | "gif";
@@ -300,24 +301,16 @@ export function BeautyProvider({ children }: { children: React.ReactNode }) {
     return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", onVis); };
   }, [ready, persist]);
 
+  // 重点色：默认色也一样写进变量（以前默认色会把变量删掉，各处退回各自写死的粉色）
   useEffect(() => {
     const root = document.documentElement.style;
-    const rgb = b.accent.slice(1).match(/.{2}/g)?.map((channel) => parseInt(channel, 16));
-    if (!rgb) return;
-    root.setProperty("--accent", rgb.join(" "));
-    const luminance = rgb.reduce((sum, channel, i) => {
-      const srgb = channel / 255;
-      return sum + [0.2126, 0.7152, 0.0722][i] * (srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4);
-    }, 0);
-    const ink = luminance > 0.179 ? "#171417" : "#fff";
-    root.setProperty("--accent-ink", ink);
-    if (b.accent.toLowerCase() === DEFAULT_ACCENT) {
-      root.removeProperty("--desktop-accent");
-      root.removeProperty("--desktop-accent-ink");
-    } else {
-      root.setProperty("--desktop-accent", b.accent);
-      root.setProperty("--desktop-accent-ink", ink);
-    }
+    const accent = isHex(b.accent) ? b.accent.toLowerCase() : DEFAULT_ACCENT;
+    const fam = accentFamily(accent);
+    for (const k in fam) root.setProperty(k, fam[k]);
+    root.setProperty("--accent", fam["--hl-rgb"]);
+    root.setProperty("--accent-ink", fam["--hl-ink"]);
+    root.setProperty("--desktop-accent", accent);
+    root.setProperty("--desktop-accent-ink", fam["--hl-ink"]);
   }, [b.accent]);
 
   const setB: Ctx["setB"] = useCallback((patch) => {
