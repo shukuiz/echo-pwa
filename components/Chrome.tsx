@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { IconBack } from "./Icons";
+import { IconBack, IconChevron } from "./Icons";
 import { useStore } from "@/lib/store";
 import { WallScreen } from "./glass/Wall";
 
@@ -21,7 +21,7 @@ export function StatusBar() {
   }, []);
   if (settings.showStatusBar === false) return null;
   return (
-    <div className="flex h-11 items-center justify-between px-6 pt-[env(safe-area-inset-top)] text-[15px] font-semibold text-ink" aria-hidden>
+    <div className="fake-sb flex h-11 items-center justify-between px-6 text-[15px] font-semibold text-ink" aria-hidden>
       <span className="tabular-nums">{time}</span>
       <div className="flex items-center gap-1.5">
         {/* 信号 */}
@@ -43,14 +43,14 @@ export function StatusBar() {
 }
 
 /** 底部可点击 Home 指示条 */
-export function HomeIndicator() {
+export function HomeIndicator({ inline = false }: { inline?: boolean } = {}) {
   const router = useRouter();
   return (
     <button
       aria-label="回到桌面"
       onClick={() => router.push("/")}
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 4px)" }}
-      className="fixed inset-x-0 bottom-0 z-40 mx-auto flex w-full max-w-[430px] items-end justify-center pt-1.5"
+      className={`z-40 mx-auto flex w-full max-w-[430px] items-end justify-center pt-1.5 ${inline ? "shrink-0" : "fixed inset-x-0 bottom-0"}`}
     >
       <span className="mb-1 h-[5px] w-[134px] rounded-capsule bg-ink/70 transition active:scale-x-90 active:bg-rose" />
     </button>
@@ -79,7 +79,8 @@ export function PageShell({
   if (glass) return <GlassShell title={title} sub={sub} right={right} footer={footer} onBack={back}>{children}</GlassShell>;
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-fog">
-      <div className="sticky top-0 z-30 bg-fog/85 backdrop-blur-xl">
+      {/* 刘海 / 灵动岛：主屏幕 App 用 black-translucent 状态栏，内容会顶到最上面，所以标题栏自己让出安全区 */}
+      <div className="sticky top-0 z-30 bg-fog/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
         <StatusBar />
         <div className="flex h-12 items-center gap-3 px-4">
           <button
@@ -110,16 +111,42 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
   const { settings } = useStore();
   const [time, setTime] = useState("");
   useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const root = document.documentElement.style;
+    const resize = () => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLTextAreaElement && focused.closest(".chat-shell") && viewport.height + 64 < document.documentElement.clientHeight) {
+        root.setProperty("--chat-keyboard-height", `${Math.floor(viewport.height)}px`);
+        root.setProperty("--chat-keyboard-top", `${Math.max(0, viewport.offsetTop)}px`);
+      } else {
+        root.removeProperty("--chat-keyboard-height");
+        root.removeProperty("--chat-keyboard-top");
+      }
+    };
+    resize();
+    viewport.addEventListener("resize", resize);
+    viewport.addEventListener("scroll", resize);
+    document.addEventListener("focusout", resize);
+    return () => {
+      viewport.removeEventListener("resize", resize);
+      viewport.removeEventListener("scroll", resize);
+      document.removeEventListener("focusout", resize);
+      root.removeProperty("--chat-keyboard-height");
+      root.removeProperty("--chat-keyboard-top");
+    };
+  }, []);
+  useEffect(() => {
     const tick = () => { const d = new Date(); setTime(`${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`); };
     tick();
     const t = setInterval(tick, 15_000);
     return () => clearInterval(t);
   }, []);
   return (
-    <WallScreen gl={false} className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col">
-      <div className="gstick sticky top-0 z-30 pt-[env(safe-area-inset-top)]">
+    <WallScreen gl={false} fixed className="chat-shell mx-auto flex w-full max-w-[430px] flex-col">
+      <div className="gstick relative z-30 shrink-0 pt-[env(safe-area-inset-top)]">
         {settings.showStatusBar !== false && (
-          <div className="flex h-11 items-center justify-between px-7 text-[15px] font-semibold" data-onwp aria-hidden>
+          <div className="fake-sb flex h-11 items-center justify-between px-7 text-[15px] font-semibold" data-onwp aria-hidden>
             <span className="tabular-nums">{time}</span>
             <span className="flex items-center gap-1.5 text-[12px]">5G <span className="bat" /></span>
           </div>
@@ -133,9 +160,9 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
           {right}
         </div>
       </div>
-      <main className="flex-1 px-4 pb-14">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-3">{children}</main>
       {footer}
-      <HomeIndicator />
+      <HomeIndicator inline />
     </WallScreen>
   );
 }
@@ -208,3 +235,16 @@ export function Segmented<T extends string>({
     </div>
   );
 }
+
+export function SettingsDrawer({ title, open, children }: { title: string; open?: boolean; children: React.ReactNode }) {
+  return (
+    <details open={open} className="settings-drawer block-white rounded-[24px]">
+      <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 font-semibold">
+        {title}
+        <IconChevron size={18} className="drawer-chevron shrink-0 text-mute" />
+      </summary>
+      <div className="border-t border-line p-4">{children}</div>
+    </details>
+  );
+}
+

@@ -16,7 +16,7 @@ const config: Config = {
         orb: v("orb"),          // 灰色圆形底
         line: v("line"),        // 分割线
         sakura: "#e9b3c1",
-        rose: "#b4637a",
+        rose: "rgb(var(--accent) / <alpha-value>)",
       },
       fontSize: {
         body: ["15px", "22px"],

@@ -11,10 +11,11 @@ export const DEFAULT_WP = "/wallpapers/default.jpg";
 
 export default function GlassRoot() {
   const ref = useRef<HTMLCanvasElement>(null);
+  const wall = useRef<HTMLDivElement>(null);
   const { b, ready } = useBeauty();
   const userWp = useBlobUrl(ready && b.wp === "user" ? "wp:user" : undefined);
 
-  useEffect(() => { if (ref.current) engine.init(ref.current); }, []);
+  useEffect(() => { if (ref.current && wall.current) engine.init(ref.current, wall.current); }, []);
   useEffect(() => { if (ready) engine.setLook(b); }, [b, ready]);
   useEffect(() => {
     if (!ready) return;
@@ -36,7 +37,7 @@ export default function GlassRoot() {
 
   return (
     <>
-      <div id="g-wall" aria-hidden />
+      <div id="g-wall" ref={wall} aria-hidden />
       <canvas id="g-canvas" ref={ref} aria-hidden />
     </>
   );

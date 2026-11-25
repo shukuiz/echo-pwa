@@ -52,22 +52,53 @@ npm start          # 默认监听 0.0.0.0:8787
 | `ECHO_PORT` | `8787` | 后端端口 |
 | `ECHO_HOST` | `0.0.0.0` | 监听地址 |
 | `ECHO_DATA_DIR` | `backend/data` | 数据目录 |
+| `ECHO_SEREIN_API_BASE` | `http://127.0.0.1:18217/v1` | 使用其他 Serein 地址时，填写可信的聊天接口地址。自定义连接名称使用 `Serein` |
+| `ECHO_SEREIN_SETTINGS_URL` | 空 | 可选的 Serein 控制台 HTTPS 设置页地址，供 Echo 设置页跳转 |
 
 ## 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | 健康检查 |
-| GET/POST | `/api/chat` | 聊天历史 / 流式聊天 |
+| GET/POST | `/api/chat` | 聊天历史 / 流式聊天（可带 `ids: {user, echo}` 让前后端消息 id 一致；`regenerate: true` 不重复存用户消息）|
 | GET/POST/PUT/DELETE | `/api/memory` | 记忆读写（`/api/memory/:id` 改/删）|
+| POST | `/api/memory/recall` | 先按向量筛选，再对记忆候选重排（未配置模型回 503）|
+| DELETE | `/api/chat/messages` | 批量删除聊天记录 `{ ids }`（多选删除、重新生成前删旧回复）|
+| GET/POST/PUT/DELETE | `/api/favorites` | 收藏本（`/api/favorites/:id` 改/删），存 `memory/favorites.json` |
+| GET/PUT | `/api/beauty` | 美化设置云端备份（只收更新的 `savedAt`），存 `memory/beauty.json` |
 | GET/POST/DELETE | `/api/files` | 文件读写（`/api/files/:id` 读/删）|
 | GET/POST | `/api/tools` | 工具调用（P1 接入 MCP，现为占位）|
 | GET/PUT | `/api/settings` | 设置读写（Key 脱敏返回）|
 | POST | `/api/settings/test` | 测试连接 |
+| POST | `/api/settings/chat-models` | 拉取聊天连接草稿的候选模型 |
+
+## 记忆向量召回与重排
+
+在 Echo 的「设置 → 记忆检索」分别填写 Echo 向量和重排模型的完整接口地址、模型名及可选 API Key。保存立即生效，每个模型都可以独立测试。测试发送固定示例文案。刷新页面后，API Key 以掩码呈现。更换端点时，原端点的 Key 不会随地址迁移。地址支持 HTTPS 或本机 HTTP。
+
+当前聊天连接使用受信任的 Serein 地址时，「记忆检索」会引导用户进入 Serein 设置。Echo 的 `/api/memory/recall` 使用独立的 Echo 向量和重排配置。
+
+已有服务端环境配置也可继续使用。设置页第一次保存某个模型后，已保存的配置优先。
+
+| 变量 | 用途 |
+|---|---|
+| `ECHO_EMBEDDING_URL` | 向量端点，例如 `https://embedding.example/v1/embeddings` |
+| `ECHO_EMBEDDING_MODEL` | 端点支持的向量模型名 |
+| `ECHO_EMBEDDING_API_KEY` | 端点要求鉴权时设置 |
+| `ECHO_RERANK_URL` | 重排端点，例如 `https://reranker.example/v1/rerank` |
+| `ECHO_RERANK_MODEL` | 端点支持的重排模型名 |
+| `ECHO_RERANK_API_KEY` | 端点要求鉴权时设置 |
+| `ECHO_RERANK_MIN_SCORE` | 重排最低相关分，范围 0–1，默认 0.65 |
+
+向量端点接收 OpenAI 格式的批量文本，返回 `data[].index` 与 `data[].embedding`。重排端点接收 `query`、`documents`、`top_n` 和 `return_documents: false`，每条候选都要返回 `results[].index` 与范围 0–1 的 `results[].relevance_score`。启用前确认配置的服务可以接收你的记忆查询和记忆文本片段。
+
+请求体示例为 `{"query":"备用钥匙放哪了？","limit":2}`，返回 `{"results":[{"id":"…","tab":"text","title":"…","text":"…","score":0.96}]}`，结果按重排分数降序。查询限 1000 字符，`limit` 默认 2，范围 1–20。启用 Echo 登录时，需使用已有会话 Cookie 和受信任的 Origin。
+
+接口只检索记忆本中的文字记忆和总结。每条最多取 1200 字符用于模型调用，最多送 20 条向量候选去重排。进程内按内容缓存文档向量，新增或编辑后按需生成，删除后从结果消失。没有达标内容时返回空列表。模型未配置、请求失败或超时分别返回 503、502 或 504。调用这个接口只返回查询结果，自动带入聊天需由调用方接入。
 
 ## Key 安全
 
-- Key 只存在 `data/memory/settings/config.json`，该文件已 `.gitignore`，**不进 Git**。
+- 聊天模型 Key 存在 `data/memory/settings/config.json`。设置页保存的向量和重排 Key 存在同目录的 `memory-models.json`。这些凭据文件均由 Git 忽略。
 - 后端不打印请求日志、不打印 Key；`GET /api/settings` 只回脱敏掩码。
 - 前端拿到的是掩码，明文 Key 只由后端使用。
 - 导出备份（前端「记忆本 → 导出」）不含 settings，天然不携带 Key。

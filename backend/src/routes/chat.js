@@ -1,12 +1,43 @@
-// 聊天转发：拼 System Prompt + 最近 20 条消息，流式请求 OpenAI 兼容接口并原样透传
+// 聊天转发：拼 System Prompt + 最近 20 条消息，流式转发 OpenAI 兼容接口的正文和推理字段
 import { getConfig, authHeaders } from "../config.js";
 import { buildSystemPrompt } from "../prompt.js";
 import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
+import { planThinking, ThinkSplitter, stripThink, shouldRetryWithoutThinking } from "../thinking.js";
 
 const MAX_HISTORY = 20;
+const MAX_DELETE = 500;
+/** 前端生成的消息 id：只收短的安全字符，其它一律由后端生成 */
+const clientId = (v) => (typeof v === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(v) ? v : null);
 
 /** 归一化 base url：去掉末尾斜杠 */
 const normBase = (u) => String(u || "").replace(/\/+$/, "");
+const plainText = (value) => typeof value === "string" ? value : "";
+
+function chatDeltas(payload) {
+  if (payload.type === "response.reasoning_summary_text.delta") return { thought: plainText(payload.delta) };
+  if (payload.type === "response.output_text.delta") return { content: plainText(payload.delta) };
+  if (payload.delta?.type === "thinking_delta") return { thought: plainText(payload.delta.thinking) };
+  if (payload.delta?.type === "text_delta") return { content: plainText(payload.delta.text) };
+
+  const choice = payload.choices?.[0];
+  const event = choice?.delta ?? choice?.message;
+  const parts = Array.isArray(event?.content) ? event.content : payload.candidates?.[0]?.content?.parts;
+  const isThought = (part) => part?.thought === true || part?.type === "thinking" || part?.type === "reasoning";
+  const thoughtParts = Array.isArray(parts)
+    ? parts.filter(isThought).map((part) => plainText(part.thinking ?? part.text)).join("")
+    : "";
+  const details = Array.isArray(event?.reasoning_details)
+    ? event.reasoning_details.map((part) => part?.type === "reasoning.summary" ? plainText(part.summary)
+      : part?.type === "reasoning.text" ? plainText(part.text) : "").join("")
+    : "";
+  return {
+    thought: details || plainText(event?.reasoning_content) || plainText(event?.reasoning) ||
+      plainText(event?.thinking) || plainText(event?.reasoning_summary) || thoughtParts,
+    content: plainText(event?.content) || (Array.isArray(parts)
+      ? parts.filter((part) => !isThought(part)).map((part) => plainText(part?.text)).join("")
+      : ""),
+  };
+}
 
 /** 从 OpenAI / New API / Serein（FastAPI detail）风格的错误体里取出可读原因 */
 function upstreamErrorMessage(text) {
@@ -30,8 +61,24 @@ export default async function chatRoute(app) {
     return chat;
   });
 
+  // 批量删除聊天记录 { ids: string[] }（多选删除 / 重新生成前删旧回复）
+  app.delete("/api/chat/messages", { bodyLimit: 64 * 1024 }, async (req, reply) => {
+    const ids = req.body?.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > MAX_DELETE || !ids.every((id) => typeof id === "string" && id.length <= 64)) {
+      reply.code(400);
+      return { error: "bad_input", message: `ids 需要是 1–${MAX_DELETE} 个消息 id` };
+    }
+    const drop = new Set(ids);
+    const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+    const before = chat.messages.length;
+    chat.messages = chat.messages.filter((m) => !drop.has(m.id));
+    const deleted = before - chat.messages.length;
+    if (deleted) await writeJSON(paths.chat(DATA_DIR), chat);
+    return { ok: true, deleted };
+  });
+
   // 流式聊天。请求体：{ messages: [{role,text}], model? }
-  // 响应：text/plain 流，逐段输出模型增量文本（前端原样逐字渲染）
+  // 新版客户端接收 NDJSON，旧版继续接收纯文本。
   app.post("/api/chat", async (req, reply) => {
     const cfg = await getConfig();
     if (!cfg.apiKey) {
@@ -45,24 +92,36 @@ export default async function chatRoute(app) {
     }
 
     const body = req.body || {};
+    const structured = body.streamFormat === "ndjson";
+    // 前端带上自己的消息 id，删除 / 重新生成时前后端才对得上；regenerate = 重新生成本轮，用户消息已在记录里
+    const ids = body.ids && typeof body.ids === "object" ? body.ids : {};
+    const userId = clientId(ids.user);
+    const replyId = clientId(ids.echo);
+    const regenerate = body.regenerate === true;
     const incoming = Array.isArray(body.messages) ? body.messages : [];
     const model = body.model || cfg.model;
+    const useResponses = cfg.provider === "openai" && typeof model === "string" &&
+      /^(?:gpt-[56](?:[.\-]|$)|o[134](?:-|$))/i.test(model) && !/-(?:chat|codex)(?:-|$)/i.test(model);
 
-    // 最近 20 条历史（含本次用户消息），映射为 OpenAI 消息格式
+    // 最近 20 条历史（含本次用户消息），映射为 OpenAI 消息格式；
+    // 只发正文：思考（reasoning / <think>）永远不回传给下一轮
     const history = incoming.slice(-MAX_HISTORY).map((m) => ({
       role: m.role === "user" ? "user" : "assistant",
-      content: String(m.text ?? m.content ?? ""),
+      content: m.role === "user" ? String(m.text ?? m.content ?? "") : stripThink(m.text ?? m.content ?? ""),
     }));
 
-    const system = await buildSystemPrompt();
+    // 思考：原生参数 / 强制 CoT 提示词（用户在设置里保存的原文）
+    const plan = planThinking(cfg.thinking, { provider: cfg.provider, model });
+    const baseSystem = await buildSystemPrompt();
+    const system = plan.systemAppend ? `${baseSystem}\n\n${plan.systemAppend}` : baseSystem;
     const messages = [{ role: "system", content: system }, ...history];
 
     // 落盘：保存这次的用户消息到聊天记录
     try {
       const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
       const lastUser = incoming[incoming.length - 1];
-      if (lastUser && lastUser.role === "user") {
-        chat.messages.push({ id: uid(), role: "user", text: lastUser.text, at: Date.now() });
+      if (lastUser && lastUser.role === "user" && !regenerate && !(userId && chat.messages.some((m) => m.id === userId))) {
+        chat.messages.push({ id: userId || uid(), role: "user", text: lastUser.text, at: Date.now() });
         await writeJSON(paths.chat(DATA_DIR), chat);
       }
     } catch {}
@@ -74,17 +133,40 @@ export default async function chatRoute(app) {
     };
     reply.raw.on("close", onClientClose);
 
+    // 官方 /responses（gpt-5 / o 系列）：原生思考时带上强度；只有明确关掉才不要思考摘要
+    const t = cfg.thinking || {};
+    const responsesReasoning = plan.mode === "off" && t.saved
+      ? undefined
+      : { summary: "auto", ...(plan.mode === "native" ? { effort: t.effort } : {}) };
+    const requestBody = (withThinking) => JSON.stringify(useResponses
+      ? { model, input: messages, stream: true, ...(responsesReasoning ? { reasoning: responsesReasoning } : {}), store: false }
+      : { ...(withThinking ? plan.extras : {}), model, messages, stream: true });
+    const send = (withThinking) => fetch(`${base}${useResponses ? "/responses" : "/chat/completions"}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(cfg), // Key 仅在后端使用；Anthropic 额外带 workspace-id
+      },
+      body: requestBody(withThinking),
+      signal: upstreamAbort.signal,
+    });
+
     let upstream;
+    let note = "";
     try {
-      upstream = await fetch(`${base}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(cfg), // Key 仅在后端使用；Anthropic 额外带 workspace-id
-        },
-        body: JSON.stringify({ model, messages, stream: true }),
-        signal: upstreamAbort.signal,
-      });
+      upstream = await send(true);
+      // 上游不认识思考参数（400）：去掉参数再试一次，并温柔地告诉前端
+      if (!useResponses && shouldRetryWithoutThinking(upstream.status, plan)) {
+        const detail = await upstream.text().catch(() => "");
+        const retry = await send(false);
+        if (retry.ok) {
+          upstream = retry;
+          note = "这个接口好像不认识思考参数，这次先不带思考回复啦（可以在设置 → 思考里换成「强制思考」）";
+        } else {
+          await retry.text().catch(() => "");
+          upstream = new Response(detail, { status: 400, headers: { "content-type": "application/json" } });
+        }
+      }
     } catch (e) {
       reply.raw.off("close", onClientClose);
       reply.code(502);
@@ -108,20 +190,41 @@ export default async function chatRoute(app) {
     const sendHeaders = () => {
       if (headersSent) return;
       headersSent = true;
+      reply.hijack();
       reply.raw.writeHead(200, {
-        "Content-Type": "text/plain; charset=utf-8",
+        ...reply.getHeaders(),
+        "Content-Type": structured ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8",
         "Cache-Control": "no-store, no-transform",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });
     };
 
-    // 解析 SSE，提取 delta 文本并原样透传给前端
+    // 从 SSE 中读取已公开的正文和推理增量。
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let reasoning = "";
     let streamError = "";
+
+    const writeDelta = (type, text) => {
+      sendHeaders();
+      reply.raw.write(structured ? JSON.stringify({ type, text }) + "\n" : text);
+    };
+    const splitter = new ThinkSplitter();
+    let notePending = structured ? note : "";
+    const emit = ({ thought, content }) => {
+      if (notePending && (thought || content)) { writeDelta("note", notePending); notePending = ""; }
+      if (thought) {
+        reasoning += thought;
+        if (structured) writeDelta("reasoning", thought);
+      }
+      if (content) {
+        fullText += content;
+        writeDelta("content", content);
+      }
+    };
 
     const pushDelta = (data) => {
       // data 为单个 SSE 的 data: 载荷
@@ -133,24 +236,25 @@ export default async function chatRoute(app) {
         return; // 非 JSON 行忽略
       }
       // 网关在流中途下发的错误事件（如上游过载、额度用尽）
-      if (json?.error) {
-        streamError = upstreamErrorMessage(JSON.stringify(json)) || "模型接口在生成中途出错";
+      if (json?.error || json?.type === "response.failed") {
+        streamError = upstreamErrorMessage(JSON.stringify(json.response ?? json)) || "模型接口在生成中途出错";
         return;
       }
-      const delta = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content ?? "";
-      if (delta) {
-        sendHeaders();
-        fullText += delta;
-        reply.raw.write(delta);
-      }
+      if (!json || typeof json !== "object") return;
+      const { thought, content } = chatDeltas(json);
+      if (thought) emit({ thought });
+      // 正文里的 <think>…</think>（强制 CoT、QwQ / R1 一类模型）拆到思考里；标签可能跨两段
+      if (content) emit(splitter.push(content));
     };
 
     let interrupted = false;
     try {
+      const jsonResponse = upstream.headers.get("content-type")?.includes("application/json");
       while (!streamError) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
+        if (jsonResponse) continue;
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
@@ -159,7 +263,9 @@ export default async function chatRoute(app) {
           pushDelta(t.slice(5).trim());
         }
       }
-      if (!streamError && buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
+      buffer += decoder.decode();
+      if (!streamError && jsonResponse) pushDelta(buffer);
+      else if (!streamError && buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
     } catch (e) {
       // 上游中断或前端停止：保留已收到的内容
       interrupted = true;
@@ -169,6 +275,26 @@ export default async function chatRoute(app) {
     }
 
     const stopped = upstreamAbort.signal.aborted;
+    // 把拆分器里留着的尾巴（可能是半个标签之外的字）补上
+    const tail = splitter.flush();
+    if (stopped || reply.raw.destroyed) { reasoning += tail.thought; fullText += tail.content; }
+    else {
+      emit(tail);
+      if (tail.unclosed && !fullText && structured && !streamError) {
+        note = "模型的思考没写完就停下了，这次没有正文 (；´д｀)";
+        writeDelta("note", note);
+      }
+    }
+    // 落盘：先保存助手完整回复再结束响应，前端拿到「完成」后立刻删除 / 重新生成也对得上
+    try {
+      if (fullText || reasoning) {
+        const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
+        const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
+        const id = replyId && !chat.messages.some((m) => m.id === replyId) ? replyId : uid();
+        chat.messages.push({ id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), ...(note ? { note } : {}), at: Date.now(), status });
+        await writeJSON(paths.chat(DATA_DIR), chat);
+      }
+    } catch {}
     if (streamError && !headersSent && !stopped) {
       // 还没输出正文：直接返回错误，前端显示原因并可重试
       reply.code(502);
@@ -181,14 +307,5 @@ export default async function chatRoute(app) {
       reply.raw.end();
     }
 
-    // 落盘：保存助手完整回复
-    try {
-      if (fullText) {
-        const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-        const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
-        chat.messages.push({ id: uid(), role: "echo", text: fullText, at: Date.now(), status });
-        await writeJSON(paths.chat(DATA_DIR), chat);
-      }
-    } catch {}
   });
 }

@@ -1,3 +1,5 @@
+import type { Settings } from "./store";
+
 // 后端 API 封装：聊天流式、记忆、文件、设置、提醒
 // 后端地址可用 NEXT_PUBLIC_ECHO_API 覆盖，默认本机 8787（开发/同机部署）
 export const ECHO_AUTH_ENABLED = process.env.NEXT_PUBLIC_ECHO_AUTH === "1";
@@ -5,16 +7,48 @@ export const ECHO_AUTH_REQUIRED_EVENT = "echo-auth-required";
 const API_BASE = ECHO_AUTH_ENABLED ? "" : (process.env.NEXT_PUBLIC_ECHO_API || "http://localhost:8787").replace(/\/+$/, "");
 
 export type ApiRole = "user" | "echo";
+export type MemoryModelKind = "embedding" | "rerank";
+export type MemoryModelSettings = { url: string; model: string; hasKey: boolean };
+type MemoryModelConfig = Record<MemoryModelKind, MemoryModelSettings>;
+// ---------- 思考（每个连接单独一份，后端 backend/src/thinking.js） ----------
+export type ThinkMode = "off" | "native" | "cot";
+export type ThinkFormat = "auto" | "openai" | "anthropic" | "gemini" | "deepseek";
+export type ThinkEffort = "minimal" | "low" | "medium" | "high";
+export type ThinkingSettings = { mode: ThinkMode; format: ThinkFormat; effort: ThinkEffort; budget: number; extra: string; cotPrompt: string };
+export type ThinkingPlan = { mode: ThinkMode; format: Exclude<ThinkFormat, "auto">; extras: Record<string, unknown>; systemAppend: string; defaults: ThinkingSettings };
+
+export type EchoSettings = Omit<Settings, "apiKey"> & {
+  officialModels?: Record<string, string>;
+  officialThinking?: Record<string, ThinkingSettings>;
+  memoryOwner?: "echo" | "serein";
+  sereinSettingsUrl?: string;
+};
+type ChatModelDraft = { provider: string; presetId?: string; url?: string; apiKey?: string; anthropicWorkspaceId?: string };
+
+/** 带 HTTP 状态码的错误：记忆本要区分 503（还没配置）和别的失败；status 0 = 根本没连上后端 */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  savedAt?: number;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
 
 async function jsonFetch<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers = new Headers(opts.headers);
   if (opts.body != null && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") throw e;
+    throw new ApiError("连不上 echo 后端", 0, "offline");
+  }
   if (!res.ok) throw await requestError(res);
   return res.json();
 }
@@ -24,10 +58,35 @@ async function requestError(res: Response) {
   if (ECHO_AUTH_ENABLED && res.status === 401 && data?.error === "echo_login_required") {
     window.dispatchEvent(new Event(ECHO_AUTH_REQUIRED_EVENT));
   }
-  if (data?.error === "no_key") return new Error("后端还没设置 API Key，请先到设置页保存");
+  if (data?.error === "no_key") return new ApiError("后端还没设置 API Key，请先到设置页保存", res.status, "no_key");
   const message = typeof data?.message === "string" && data.message;
-  return new Error(message || `请求失败 (${res.status})`);
+  const err = new ApiError(message || `请求失败 (${res.status})`, res.status, typeof data?.error === "string" ? data.error : undefined);
+  if (typeof data?.savedAt === "number") err.savedAt = data.savedAt; // 美化备份 409：云端那份的时间
+  return err;
 }
+
+// ---------- 收藏本 ----------
+export type FavoriteMsg = { id: string; role: ApiRole; text: string; at: number };
+export type Favorite = { id: string; title: string; note: string; source: string; messages: FavoriteMsg[]; createdAt: number };
+
+// ---------- 记忆本（字段对齐 Serein：Scene / Event / 喜好 + 人设；见 docs/MEMORY_GATEWAY.md） ----------
+export type MemoryKind = "scene" | "event" | "preference" | "persona";
+export type MemoryStatus = "active" | "archived";
+export type PreferenceInfo = { subject: "user" | "ai" | "both"; polarity: "like" | "dislike"; keywords: string[]; reason: string };
+export type MemorySource = { type: "chat" | "manual" | "import"; messageIds: string[] };
+/** 记忆条目上可选的扩展字段（旧后端不认识也不会坏，只是不保存） */
+export type MemoryExtra = {
+  kind?: MemoryKind;
+  cues?: string[];          // 召回线索，1–8 条，每条 ≤80 字（Serein write_scene 的 cues）
+  domain?: string;          // 主域 / 分类
+  status?: MemoryStatus;    // 归档后不进提示词、不参加召回
+  favorite?: boolean;
+  importance?: number;      // 1–5
+  date?: string;            // YYYY-MM-DD，记忆发生的日子
+  preference?: PreferenceInfo;
+  source?: MemorySource;
+};
+export type RecallHit = { id: string; tab?: string; kind?: MemoryKind; title: string; text: string; score: number };
 
 export interface ChatMsgInput {
   role: ApiRole;
@@ -37,23 +96,48 @@ export interface ChatMsgInput {
 /** 流式聊天：onDelta 每次收到增量文本；signal 用于停止生成 */
 export async function chatStream(
   messages: ChatMsgInput[],
-  opts: { model?: string; signal?: AbortSignal; onDelta: (text: string) => void }
+  opts: {
+    model?: string; signal?: AbortSignal; onDelta: (text: string) => void; onReasoning?: (text: string) => void;
+    /** 后端的小提示：比如接口不认思考参数、已经去掉参数重试 */
+    onNote?: (text: string) => void;
+    /** 前端自己的消息 id：后端按这个存，之后删除 / 重新生成才对得上 */
+    ids?: { user?: string; echo?: string };
+    /** 重新生成本轮：用户消息已经在记录里，后端不再存一遍 */
+    regenerate?: boolean;
+  }
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, model: opts.model }),
+    body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined }),
     signal: opts.signal,
   });
   if (!res.ok) throw await requestError(res);
   const reader = res.body?.getReader();
   if (!reader) throw new Error("无响应流");
   const dec = new TextDecoder();
+  const structured = res.headers.get("content-type")?.includes("application/x-ndjson");
+  let buffer = "";
+  const dispatch = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === "reasoning") opts.onReasoning?.(event.text);
+    if (event.type === "content") opts.onDelta(event.text);
+    if (event.type === "note") opts.onNote?.(event.text);
+  };
   while (true) {
     const { done, value } = await reader.read();
+    const chunk = done ? dec.decode() : dec.decode(value, { stream: true });
+    if (structured) {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      lines.forEach(dispatch);
+      if (done) dispatch(buffer);
+    } else if (chunk) {
+      opts.onDelta(chunk);
+    }
     if (done) break;
-    const chunk = dec.decode(value, { stream: true });
-    if (chunk) opts.onDelta(chunk);
   }
 }
 
@@ -68,25 +152,57 @@ export const api = {
   // 聊天历史
   getHistory: () => jsonFetch<{ messages: any[] }>("/api/chat/history"),
   chatStream,
+  /** 批量删除聊天记录（多选删除、重新生成前删旧回复） */
+  deleteMessages: (ids: string[]) =>
+    jsonFetch<{ ok: true; deleted: number }>("/api/chat/messages", { method: "DELETE", body: JSON.stringify({ ids }) }),
+
+  // 收藏本
+  getFavorites: () => jsonFetch<{ favorites: Favorite[] }>("/api/favorites", { cache: "no-store" }),
+  addFavorite: (f: { messages: FavoriteMsg[]; title?: string; note?: string; source?: string }) =>
+    jsonFetch<Favorite>("/api/favorites", { method: "POST", body: JSON.stringify(f) }),
+  updateFavorite: (id: string, patch: { title?: string; note?: string }) =>
+    jsonFetch<Favorite>(`/api/favorites/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteFavorite: (id: string) => jsonFetch(`/api/favorites/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // 美化设置云端备份（不含图片）
+  getBeauty: () => jsonFetch<{ beauty: unknown; savedAt: number }>("/api/beauty", { cache: "no-store" }),
+  putBeauty: (beauty: unknown, savedAt: number) =>
+    jsonFetch<{ ok: true; savedAt: number }>("/api/beauty", { method: "PUT", body: JSON.stringify({ beauty, savedAt }) }),
 
   // 设置（Key 只走后端，前端拿到的已脱敏）
-  getSettings: () => jsonFetch("/api/settings"),
-  saveSettings: (patch: Record<string, unknown>) => jsonFetch("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
-  createPreset: (p: { name: string; url: string; apiKey?: string }) => jsonFetch("/api/presets", { method: "POST", body: JSON.stringify(p) }),
-  updatePreset: (id: string, p: { name?: string; url?: string; apiKey?: string }) =>
-    jsonFetch(`/api/presets/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(p) }),
-  deletePreset: (id: string) => jsonFetch(`/api/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  testConnection: () => jsonFetch("/api/settings/test", { method: "POST" }),
+  getSettings: () => jsonFetch<EchoSettings>("/api/settings", { cache: "no-store" }),
+  saveSettings: (patch: Record<string, unknown>) => jsonFetch<EchoSettings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  createPreset: (p: { name: string; url: string; apiKey?: string; model?: string; activate?: boolean }) =>
+    jsonFetch<EchoSettings>("/api/presets", { method: "POST", body: JSON.stringify(p) }),
+  updatePreset: (id: string, p: { name?: string; url?: string; apiKey?: string; model?: string; activate?: boolean; thinking?: Partial<ThinkingSettings> }) =>
+    jsonFetch<EchoSettings>(`/api/presets/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(p) }),
+  deletePreset: (id: string) => jsonFetch<EchoSettings>(`/api/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** 思考设置预览：后端算出「最终会加到请求里的参数」，和聊天时同一个函数 */
+  previewThinking: (body: { thinking: Partial<ThinkingSettings>; provider: string; model?: string }) =>
+    jsonFetch<ThinkingPlan>("/api/settings/thinking-preview", { method: "POST", body: JSON.stringify(body) }),
+  testConnection: () => jsonFetch<{ ok: boolean; message: string }>("/api/settings/test", { method: "POST" }),
+  listChatModels: (draft: ChatModelDraft) =>
+    jsonFetch<{ models: string[] }>("/api/settings/chat-models", { method: "POST", body: JSON.stringify(draft) }),
   // 拉取模型列表（走后端 /models，可选搜索）
   getModels: (q?: string) => jsonFetch<{ models: string[]; error?: string; message?: string }>(`/api/models${q ? `?q=${encodeURIComponent(q)}` : ""}`),
 
   // 记忆
+  getMemoryModels: () => jsonFetch<MemoryModelConfig>("/api/settings/memory-models", { cache: "no-store" }),
+  saveMemoryModel: (kind: MemoryModelKind, settings: { url: string; model: string; apiKey?: string }) =>
+    jsonFetch<MemoryModelConfig>(`/api/settings/memory-models/${kind}`, { method: "PUT", body: JSON.stringify(settings) }),
+  listMemoryModels: (kind: MemoryModelKind, settings: { url: string; apiKey?: string }) =>
+    jsonFetch<{ models: string[] }>(`/api/settings/memory-models/${kind}/models`, { method: "POST", body: JSON.stringify(settings) }),
+  testMemoryModel: (kind: MemoryModelKind) =>
+    jsonFetch<{ ok: boolean; message: string }>(`/api/settings/memory-models/${kind}/test`, { method: "POST" }),
   getMemory: () => jsonFetch<{ memory: any[]; reminders: any[] }>("/api/memory"),
-  addMemory: (m: { tab: string; title?: string; text: string; pinned?: boolean }) =>
+  addMemory: (m: { tab?: string; title?: string; text: string; pinned?: boolean } & MemoryExtra) =>
     jsonFetch("/api/memory", { method: "POST", body: JSON.stringify(m) }),
   updateMemory: (id: string, patch: Record<string, unknown>) =>
     jsonFetch(`/api/memory/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
   deleteMemory: (id: string) => jsonFetch(`/api/memory/${id}`, { method: "DELETE" }),
+  /** 记忆召回测试：先向量筛选再重排；没配置模型时后端回 503 memory_recall_unconfigured */
+  recallMemory: (query: string, limit = 5) =>
+    jsonFetch<{ results: RecallHit[] }>("/api/memory/recall", { method: "POST", body: JSON.stringify({ query, limit }) }),
 
   // 提醒
   addReminder: (r: { text: string; time: number; pinned?: boolean }) =>
