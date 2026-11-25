@@ -2,7 +2,10 @@ import { translateThought } from "../translate-thought.js";
 // 聊天转发：拼 System Prompt + 最近 20 条消息，流式转发 OpenAI 兼容接口的正文和推理字段
 import { getConfig, authHeaders } from "../config.js";
 import { buildSystemPrompt } from "../prompt.js";
-import { paths, readJSON, writeJSON, uid, DATA_DIR } from "../storage.js";
+import { uid } from "../storage.js";
+import { readChat, mutateChat } from "../chat-store.js";
+import { generations, cleanGenId } from "../generations.js";
+import { classifyReplyError } from "../reply-errors.js";
 import { planThinking, ThinkSplitter, stripThink, shouldRetryWithoutThinking } from "../thinking.js";
 import { codexBridge, gentleCodexError } from "../codex.js";
 
@@ -58,9 +61,24 @@ function upstreamErrorMessage(text) {
 
 export default async function chatRoute(app) {
   // 读取历史聊天记录（供前端初始化）
-  app.get("/api/chat/history", async () => {
-    const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-    return chat;
+  app.get("/api/chat/history", async () => readChat());
+
+  // 进行中 / 刚结束的回复：前端回到聊天页、从后台切回来时按 genId 接上
+  app.get("/api/chat/active", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return { generations: generations().recent() };
+  });
+  app.get("/api/chat/generations/:genId", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const g = generations().get(String(req.params.genId || ""));
+    if (!g) return reply.code(404).send({ error: "not_found", message: "这条回复已经不在进行中了" });
+    return g.snapshot();
+  });
+  // 「停止」按钮：真正取消上游（离开页面、断网都不会取消）
+  app.post("/api/chat/stop", { bodyLimit: 4096 }, async (req, reply) => {
+    const g = generations().get(String(req.body?.genId || ""));
+    if (!g) return reply.code(404).send({ error: "not_found", message: "这条回复已经结束了" });
+    return { ok: true, stopped: g.stop(), status: g.status };
   });
 
   // 批量删除聊天记录 { ids: string[] }（多选删除 / 重新生成前删旧回复）
@@ -71,27 +89,28 @@ export default async function chatRoute(app) {
       return { error: "bad_input", message: `ids 需要是 1–${MAX_DELETE} 个消息 id` };
     }
     const drop = new Set(ids);
-    const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-    const before = chat.messages.length;
-    chat.messages = chat.messages.filter((m) => !drop.has(m.id));
-    const deleted = before - chat.messages.length;
-    if (deleted) await writeJSON(paths.chat(DATA_DIR), chat);
-    return { ok: true, deleted };
+    const deleted = await mutateChat((chat) => {
+      const before = chat.messages.length;
+      chat.messages = chat.messages.filter((m) => !drop.has(m.id));
+      return before - chat.messages.length || false;
+    });
+    return { ok: true, deleted: deleted || 0 };
   });
 
-  // 流式聊天。请求体：{ messages: [{role,text}], model? }
+  // 流式聊天。请求体：{ messages: [{role,text}], model?, ids?, genId? }
   // 新版客户端接收 NDJSON，旧版继续接收纯文本。
+  // 带 genId（请求 ID）的新客户端：断开连接不取消，后端照样写完并落盘；只有 POST /api/chat/stop 才取消
   app.post("/api/chat", async (req, reply) => {
     const cfg = await getConfig();
     if (cfg.apiMode === "codex") return codexChat(req, reply, cfg);
     if (!cfg.apiKey) {
       reply.code(400);
-      return { error: "no_key", message: "后端还没有设置 API Key，请先到设置页保存" };
+      return { error: "no_key", message: "后端还没有设置 API Key，请先到设置页保存", kind: "login", actions: ["settings"] };
     }
     const base = normBase(cfg.proxyUrl);
     if (!/^https?:\/\//i.test(base)) {
       reply.code(400);
-      return { error: "bad_base", message: "还没选择接口，或接口地址不是 http(s):// 开头" };
+      return { error: "bad_base", message: "还没选择接口，或接口地址不是 http(s):// 开头", kind: "param", actions: ["settings"] };
     }
 
     const body = req.body || {};
@@ -100,8 +119,11 @@ export default async function chatRoute(app) {
     const ids = body.ids && typeof body.ids === "object" ? body.ids : {};
     const userId = clientId(ids.user);
     const replyId = clientId(ids.echo);
+    const genId = cleanGenId(body.genId);
+    const detached = !!genId;
     const regenerate = body.regenerate === true;
     const incoming = Array.isArray(body.messages) ? body.messages : [];
+    // 模型在发送这一刻就定下：生成中途换模型，这条照样用旧模型写完
     const model = body.model || cfg.model;
     const useResponses = cfg.provider === "openai" && typeof model === "string" &&
       /^(?:gpt-[56](?:[.\-]|$)|o[134](?:-|$))/i.test(model) && !/-(?:chat|codex)(?:-|$)/i.test(model);
@@ -120,21 +142,31 @@ export default async function chatRoute(app) {
     const messages = [{ role: "system", content: system }, ...history];
 
     // 落盘：保存这次的用户消息到聊天记录
-    try {
-      const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-      const lastUser = incoming[incoming.length - 1];
-      if (lastUser && lastUser.role === "user" && !regenerate && !(userId && chat.messages.some((m) => m.id === userId))) {
-        chat.messages.push({ id: userId || uid(), role: "user", text: lastUser.text, at: Date.now() });
-        await writeJSON(paths.chat(DATA_DIR), chat);
-      }
-    } catch {}
+    await saveUserMessage({ incoming, userId, regenerate });
 
-    // 前端点「停止生成」或断网时，同步取消上游请求，避免网关继续生成并计费
     const upstreamAbort = new AbortController();
+    let gen;
+    try {
+      gen = generations().start({
+        genId: genId || "g" + uid() + uid(), messageId: replyId || uid(), via: "api", model,
+        timeouts: cfg.timeouts, abort: () => upstreamAbort.abort(),
+      });
+    } catch (e) {
+      reply.code(409);
+      return { error: "busy", message: "这条已经在回复中了", kind: "busy", actions: ["retry"] };
+    }
+    reply.header("X-Echo-Gen-Id", gen.genId);
+    // 旧客户端：点「停止生成」或断网 = 断开连接，同步取消上游，避免网关继续生成并计费
     const onClientClose = () => {
-      if (!reply.raw.writableFinished) upstreamAbort.abort();
+      if (!detached && !reply.raw.writableFinished) { gen.stopRequested = true; upstreamAbort.abort(); }
     };
     reply.raw.on("close", onClientClose);
+    const fail = (error, status) => {
+      reply.raw.off("close", onClientClose);
+      gen.finish("error", error);
+      reply.code(status);
+      return { error: "upstream", message: error.message, kind: error.kind, actions: error.actions, genId: gen.genId, detail: error.detail };
+    };
 
     // 官方 /responses（gpt-5 / o 系列）：原生思考时带上强度；只有明确关掉才不要思考摘要
     const t = cfg.thinking || {};
@@ -171,27 +203,24 @@ export default async function chatRoute(app) {
         }
       }
     } catch (e) {
-      reply.raw.off("close", onClientClose);
-      reply.code(502);
-      return { error: "connect_failed", message: "连不上模型接口：" + e.message };
+      if (gen.stopRequested) { reply.raw.off("close", onClientClose); gen.finish("stopped"); reply.code(499); return { error: "stopped", message: "已停止" }; }
+      if (gen.timeout) return fail(classifyReplyError({ timeout: gen.timeout, seconds: gen.timeoutSeconds }), 504);
+      return fail(classifyReplyError({ status: 0, message: "连不上模型接口：" + e.message }), 502);
     }
 
     if (!upstream.ok || !upstream.body) {
-      reply.raw.off("close", onClientClose);
       const detail = await upstream.text().catch(() => "");
-      reply.code(upstream.status || 502);
       const reason = upstreamErrorMessage(detail);
-      return {
-        error: "upstream",
-        message: `模型接口返回 ${upstream.status}${reason ? "：" + reason : ""}`,
-        detail: detail.slice(0, 300),
-      };
+      const error = classifyReplyError({ status: upstream.status, message: reason || detail.slice(0, 200) });
+      error.message = `${error.message}（接口返回 ${upstream.status}${reason ? "：" + reason : ""}）`;
+      return fail(error, upstream.status || 502);
     }
 
     // 响应头延迟到第一段正文再发：开头就出错时还能返回带原因的错误码
     let headersSent = false;
+    const live = () => !reply.raw.destroyed && !reply.raw.writableEnded;
     const sendHeaders = () => {
-      if (headersSent) return;
+      if (headersSent || !live()) return;
       headersSent = true;
       reply.hijack();
       reply.raw.writeHead(200, {
@@ -207,26 +236,21 @@ export default async function chatRoute(app) {
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let fullText = "";
-    let reasoning = "";
     let streamError = "";
 
     const writeDelta = (type, text) => {
+      gen.push(type, text);
+      if (!live()) return; // 前端离开了：后端照样往下写，回来时按 genId 接上
       sendHeaders();
-      reply.raw.write(structured ? JSON.stringify({ type, text }) + "\n" : text);
+      if (headersSent && live()) reply.raw.write(structured ? JSON.stringify({ type, text }) + "\n" : type === "content" ? text : "");
     };
     const splitter = new ThinkSplitter();
     let notePending = structured ? note : "";
+    if (!structured && note) gen.note = note;
     const emit = ({ thought, content }) => {
       if (notePending && (thought || content)) { writeDelta("note", notePending); notePending = ""; }
-      if (thought) {
-        reasoning += thought;
-        if (structured) writeDelta("reasoning", thought);
-      }
-      if (content) {
-        fullText += content;
-        writeDelta("content", content);
-      }
+      if (thought) writeDelta("reasoning", thought);
+      if (content) writeDelta("content", content);
     };
 
     const pushDelta = (data) => {
@@ -244,6 +268,7 @@ export default async function chatRoute(app) {
         return;
       }
       if (!json || typeof json !== "object") return;
+      gen.touch();
       const { thought, content } = chatDeltas(json);
       if (thought) emit({ thought });
       // 正文里的 <think>…</think>（强制 CoT、QwQ / R1 一类模型）拆到思考里；标签可能跨两段
@@ -270,75 +295,89 @@ export default async function chatRoute(app) {
       if (!streamError && jsonResponse) pushDelta(buffer);
       else if (!streamError && buffer.trim().startsWith("data:")) pushDelta(buffer.trim().slice(5).trim());
     } catch (e) {
-      // 上游中断或前端停止：保留已收到的内容
+      // 上游中断、超时或停止：保留已收到的内容
       interrupted = true;
     } finally {
       reply.raw.off("close", onClientClose);
       if (streamError || interrupted) reader.cancel().catch(() => {});
     }
 
-    const stopped = upstreamAbort.signal.aborted;
+    const stopped = gen.stopRequested;
     // 把拆分器里留着的尾巴（可能是半个标签之外的字）补上
     const tail = splitter.flush();
-    if (stopped || reply.raw.destroyed) { reasoning += tail.thought; fullText += tail.content; }
+    if (stopped) { gen.reasoning += tail.thought; gen.text += tail.content; }
     else {
       emit(tail);
-      if (tail.unclosed && !fullText && structured && !streamError) {
+      if (tail.unclosed && !gen.text && structured && !streamError && !gen.timeout) {
         note = "模型的思考没写完就停下了，这次没有正文 (；´д｀)";
         writeDelta("note", note);
       }
     }
+    let error = null;
+    if (!stopped && gen.timeout) error = classifyReplyError({ timeout: gen.timeout, seconds: gen.timeoutSeconds });
+    else if (!stopped && streamError) error = classifyReplyError({ message: streamError });
+    else if (!stopped && interrupted) error = classifyReplyError({ status: 0, message: "upstream interrupted" });
+
     let reasoningOriginal;
-    if (reasoning && !stopped && !streamError && !interrupted) {
+    if (gen.reasoning && !stopped && !error) {
       try {
-        const translated = await translateThought(reasoning);
-        if (translated) {
-          reasoningOriginal = reasoning;
-          reasoning = translated;
-          if (structured && !reply.raw.destroyed) writeDelta("reasoning_translated", translated);
-        }
+        const translated = await translateThought(gen.reasoning);
+        if (translated) { reasoningOriginal = gen.reasoning; writeDelta("reasoning_translated", translated); }
       } catch { /* Translation failures preserve the original thought. */ }
     }
+    const status = stopped ? "stopped" : error ? "error" : "done";
     // 落盘：先保存助手完整回复再结束响应，前端拿到「完成」后立刻删除 / 重新生成也对得上
-    try {
-      if (fullText || reasoning) {
-        const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-        const status = stopped ? "stopped" : streamError || interrupted ? "error" : "done";
-        const id = replyId && !chat.messages.some((m) => m.id === replyId) ? replyId : uid();
-        chat.messages.push({ id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), ...(reasoningOriginal ? {reasoningOriginal} : {}), ...(note ? { note } : {}), at: Date.now(), status });
-        await writeJSON(paths.chat(DATA_DIR), chat);
-      }
-    } catch {}
-    if (streamError && !headersSent && !stopped) {
+    await saveEchoMessage(gen, { status, error, reasoningOriginal });
+    gen.finish(status, error);
+
+    if (error && !headersSent && live()) {
       // 还没输出正文：直接返回错误，前端显示原因并可重试
-      reply.code(502);
-      reply.send({ error: "upstream", message: streamError });
-    } else if ((streamError || interrupted) && !stopped) {
-      // 已输出部分正文：中断连接，让前端进入「失败可重试」而不是当成正常完成
-      reply.raw.destroy(new Error(streamError || "upstream interrupted"));
-    } else if (!reply.raw.destroyed) {
+      reply.code(gen.timeout ? 504 : 502);
+      reply.send({ error: "upstream", message: error.message, kind: error.kind, actions: error.actions, genId: gen.genId });
+    } else if (error && live()) {
+      // 已输出部分正文：新客户端收到一行 error；旧客户端断开连接进入「失败可重试」
+      if (structured) { reply.raw.write(JSON.stringify({ type: "error", text: error.message, kind: error.kind, actions: error.actions }) + "\n"); reply.raw.end(); }
+      else reply.raw.destroy(new Error(error.message));
+    } else if (live()) {
       sendHeaders();
       reply.raw.end();
-    }
-
+    } else if (!headersSent) reply.hijack(); // 前端早就走了：结果已落盘，不用再回
   });
 }
 
 /** 存一条用户消息（和普通接口同一套规则：重新生成 / 已存在的 id 不重复存） */
 async function saveUserMessage({ incoming, userId, regenerate }) {
+  const lastUser = [...incoming].reverse().find((m) => m?.role === "user");
+  if (!lastUser || incoming[incoming.length - 1]?.role !== "user" || regenerate) return;
   try {
-    const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-    const lastUser = incoming[incoming.length - 1];
-    if (lastUser && lastUser.role === "user" && !regenerate && !(userId && chat.messages.some((m) => m.id === userId))) {
+    await mutateChat((chat) => {
+      if (userId && chat.messages.some((m) => m.id === userId)) return false;
       chat.messages.push({ id: userId || uid(), role: "user", text: lastUser.text, at: Date.now() });
-      await writeJSON(paths.chat(DATA_DIR), chat);
-    }
+    });
+  } catch {}
+}
+
+/** 存 echo 的回复：带上请求 ID 和当时用的模型；同一个 genId 只存一次 */
+async function saveEchoMessage(gen, { status, error, reasoningOriginal }) {
+  if (!gen.text && !gen.reasoning) return;
+  try {
+    await mutateChat((chat) => {
+      if (chat.messages.some((m) => m.genId === gen.genId)) return false;
+      const id = gen.messageId && !chat.messages.some((m) => m.id === gen.messageId) ? gen.messageId : uid();
+      gen.messageId = id;
+      chat.messages.push({
+        id, role: "echo", text: gen.text, ...(gen.reasoning ? { reasoning: gen.reasoning } : {}),
+        ...(reasoningOriginal ? { reasoningOriginal } : {}), ...(gen.note ? { note: gen.note } : {}),
+        via: gen.via, ...(gen.model ? { model: gen.model } : {}), genId: gen.genId, at: Date.now(), status,
+        ...(error ? { errorKind: error.kind, errorMessage: error.message } : {}),
+      });
+    });
   } catch {}
 }
 
 /**
  * Codex（ChatGPT 订阅）：只把这一轮的新消息交给常驻的 codex app-server，
- * Codex 自己保管对话上下文；echo 的 chat.json 仍然记一份，用来显示历史。
+ * Codex 自己保管对话上下文；echo 的聊天记录仍然记一份，用来显示历史。
  */
 async function codexChat(req, reply, cfg) {
   const body = req.body || {};
@@ -346,6 +385,8 @@ async function codexChat(req, reply, cfg) {
   const ids = body.ids && typeof body.ids === "object" ? body.ids : {};
   const userId = clientId(ids.user);
   const replyId = clientId(ids.echo);
+  const genId = cleanGenId(body.genId);
+  const detached = !!genId;
   const regenerate = body.regenerate === true;
   const incoming = Array.isArray(body.messages) ? body.messages : [];
   const lastUser = [...incoming].reverse().find((m) => m?.role === "user");
@@ -358,16 +399,23 @@ async function codexChat(req, reply, cfg) {
   const bridge = codexBridge();
   if (bridge.busy) {
     reply.code(409);
-    return { error: "codex_busy", message: "上一条还在回复中，等它说完再发吧" };
+    return { error: "codex_busy", message: "上一条还在回复中，等它说完再发吧", kind: "busy", actions: ["retry"] };
   }
   const settings = cfg.codex || {};
   const showThinking = settings.showThinking !== false;
 
   await saveUserMessage({ incoming, userId, regenerate });
 
+  const gen = generations().start({
+    genId: genId || "g" + uid() + uid(), messageId: replyId || uid(), via: "codex", model: settings.model || "",
+    timeouts: cfg.timeouts, firstTokenSeconds: cfg.timeouts?.codexFirstToken, abort: () => { bridge.abortTurn().catch(() => {}); },
+  });
+  reply.header("X-Echo-Gen-Id", gen.genId);
+
   let headersSent = false;
+  const live = () => !reply.raw.destroyed && !reply.raw.writableEnded;
   const sendHeaders = () => {
-    if (headersSent) return;
+    if (headersSent || !live()) return;
     headersSent = true;
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -379,18 +427,18 @@ async function codexChat(req, reply, cfg) {
     });
   };
   const write = (type, chunk) => {
-    if (reply.raw.destroyed) return;
+    gen.push(type, chunk);
+    if (!live()) return;
     sendHeaders();
+    if (!headersSent || !live()) return;
     if (structured) reply.raw.write(JSON.stringify({ type, text: chunk }) + "\n");
     else if (type === "content") reply.raw.write(chunk);
   };
 
-  let fullText = "";
-  let reasoning = "";
-  let stopped = false;
+  // 旧客户端：断开 = 停止
   const onClose = () => {
-    if (reply.raw.writableFinished) return;
-    stopped = true;
+    if (detached || reply.raw.writableFinished) return;
+    gen.stopRequested = true;
     bridge.interrupt().catch(() => {});
   };
   reply.raw.on("close", onClose);
@@ -401,8 +449,9 @@ async function codexChat(req, reply, cfg) {
       text, images, regenerate,
       cfg: { model: settings.model, effort: settings.effort, showThinking },
       handlers: {
-        onContent: (t) => { fullText += t; write("content", t); },
-        onThought: (t) => { if (!showThinking) return; reasoning += t; write("reasoning", t); },
+        onContent: (t) => write("content", t),
+        onThought: (t) => { if (showThinking) write("reasoning", t); else gen.touch(); },
+        onActivity: () => gen.touch(),
       },
     });
   } catch (e) {
@@ -410,42 +459,39 @@ async function codexChat(req, reply, cfg) {
   } finally {
     reply.raw.off("close", onClose);
   }
-  if (result.status === "interrupted") stopped = true;
-  const failed = result.status === "failed" || (!fullText && !stopped && result.error);
-  const message = failed ? (result.code === "busy" ? result.error : gentleCodexError(result.error)) : "";
+  const stopped = gen.stopRequested || (result.status === "interrupted" && !gen.timeout);
+  let error = null;
+  if (!stopped && gen.timeout) error = classifyReplyError({ timeout: gen.timeout, seconds: gen.timeoutSeconds, via: "codex" });
+  else if (!stopped && (result.status === "failed" || (!gen.text && result.error))) {
+    error = result.code === "busy" ? classifyReplyError({ message: "codex_busy" })
+      : classifyReplyError({ message: result.error, via: "codex" });
+    if (error.kind === "other") error.message = gentleCodexError(result.error);
+  }
   const note = result.note || "";
-  if (note && !failed) write("note", note);
+  if (note && !error) write("note", note);
 
   let reasoningOriginal;
-  if (reasoning && !stopped && !failed) {
+  if (gen.reasoning && !stopped && !error) {
     try {
-      const translated = await translateThought(reasoning);
-      if (translated) { reasoningOriginal = reasoning; reasoning = translated; write("reasoning_translated", translated); }
+      const translated = await translateThought(gen.reasoning);
+      if (translated) { reasoningOriginal = gen.reasoning; write("reasoning_translated", translated); }
     } catch {}
   }
-  try {
-    if (fullText || reasoning) {
-      const chat = await readJSON(paths.chat(DATA_DIR), { messages: [] });
-      const id = replyId && !chat.messages.some((m) => m.id === replyId) ? replyId : uid();
-      chat.messages.push({
-        id, role: "echo", text: fullText, ...(reasoning ? { reasoning } : {}), ...(reasoningOriginal ? { reasoningOriginal } : {}),
-        ...(note ? { note } : {}), via: "codex", at: Date.now(), status: stopped ? "stopped" : failed ? "error" : "done",
-      });
-      await writeJSON(paths.chat(DATA_DIR), chat);
-    }
-  } catch {}
+  const status = stopped ? "stopped" : error ? "error" : "done";
+  await saveEchoMessage(gen, { status, error, reasoningOriginal });
+  gen.finish(status, error);
 
-  if (failed && !headersSent && !stopped) {
-    reply.code(result.code === "busy" ? 409 : 502);
-    return reply.send({ error: "codex", message });
+  if (error && !headersSent && live()) {
+    reply.code(error.kind === "busy" ? 409 : gen.timeout ? 504 : 502);
+    return reply.send({ error: "codex", message: error.message, kind: error.kind, actions: error.actions, genId: gen.genId });
   }
-  if (failed && !stopped) {
-    write("note", message);
-    reply.raw.destroy(new Error(message));
+  if (error && live()) {
+    if (structured) { reply.raw.write(JSON.stringify({ type: "error", text: error.message, kind: error.kind, actions: error.actions }) + "\n"); reply.raw.end(); }
+    else { reply.raw.destroy(new Error(error.message)); }
     return;
   }
-  if (!reply.raw.destroyed) {
+  if (live()) {
     sendHeaders();
     reply.raw.end();
-  }
+  } else if (!headersSent) reply.hijack();
 }

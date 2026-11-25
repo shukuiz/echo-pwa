@@ -6,6 +6,7 @@ import { Hand, useStore } from "@/lib/store";
 import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
 import { DEFAULT_ACCENT, useBeauty } from "@/lib/beauty";
 import ChatConnectionSettings from "./ChatConnectionSettings";
+import ReplyTimeoutSettings from "./ReplyTimeoutSettings";
 import { openUpdateNotes } from "@/components/UpdateNotes";
 import Link from "next/link";
 import { APP_VERSION } from "@/lib/version";
@@ -45,6 +46,8 @@ export default function SettingsPage() {
           </span>
           <IconChevron size={18} className="-rotate-90 shrink-0 text-mute" />
         </Link>
+
+        <ReplyTimeoutSettings />
 
         <SettingsDrawer title="动手入口">
           <div className="divide-y divide-line">

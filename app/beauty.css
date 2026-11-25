@@ -488,3 +488,13 @@ html.dark .ulead { color: var(--hl-text-l); }
   background: rgba(38,48,61,.82); color: #fff; font-size: 13px; line-height: 1.55; text-align: left;
   backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4);
   box-shadow: 0 10px 28px -12px rgba(18,28,45,.55), inset 0 0 0 .5px rgba(255,255,255,.25); animation: pop .25s ease-out; }
+
+/* ---------- 聊天：回复出错卡片（说人话 + 能做的事） ---------- */
+.reply-err { --r: 20px; padding: 10px 14px 12px; max-width: min(78vw, 330px); border-radius: 20px 20px 20px 8px; }
+.reply-err .t { font-size: 15px; font-weight: 600; }
+.reply-err .d { margin-top: 2px; font-size: 13px; line-height: 1.6; word-break: break-word; }
+.reply-err .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.reply-err .acts button { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px;
+  background: var(--g-chip); color: inherit; font-size: 14px; cursor: pointer; text-shadow: none; }
+.reply-err .acts button.on { background: var(--hl); color: var(--hl-ink); }
+.reply-err .acts button:disabled { opacity: .45; }

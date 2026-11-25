@@ -10,7 +10,8 @@ import {
 } from "@/components/Icons";
 import { Card, Msg, uid, useStore } from "@/lib/store";
 import { fileKindLabel, Think } from "@/lib/mock";
-import { api, ApiError, ECHO_AUTH_ENABLED } from "@/lib/api";
+import { api, ApiError, ECHO_AUTH_ENABLED, ECHO_AUTH_REQUIRED_EVENT, type ReplyAction } from "@/lib/api";
+import { refreshLive, resumeGenerations, startGeneration, stopGeneration, useLiveGen } from "@/lib/generation";
 import { addFavorite } from "@/lib/favorites";
 import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
@@ -48,8 +49,8 @@ function Chat() {
   const params = useSearchParams();
   const router = useRouter();
   const [input, setInput] = useState("");
-  const [streamingId, setStreamingId] = useState<string | null>(null);
-  const [working, setWorking] = useState<string | null>(null);
+  const live = useLiveGen();
+  const streamingId = live?.echoId ?? null;
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
   // 多选：sel 不为 null 就是多选模式；anchor = 最后点的那句，「从这句以后 / 以前」以它为准
@@ -60,13 +61,15 @@ function Chat() {
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<Msg[]>(messages);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const followLatest = useRef(true);
   const presetDone = useRef(false);
-  const busy = !!streamingId || !!working || !!work;
+  const liveMsg = streamingId ? messages.find((m) => m.id === streamingId) : undefined;
+  // 还没出第一个字时显示「正在想」
+  const working = live && liveMsg && !liveMsg.text && !liveMsg.reasoning ? (live.polling ? "echo 还在写，正在接上…" : "echo 正在想…") : null;
+  const busy = !!live || !!work;
   const workOpen = !!work && !work.collapsed;
 
   useLayoutEffect(() => {
@@ -110,6 +113,16 @@ function Chat() {
 
   useEffect(() => () => clearAll(), []);
 
+  // 回到聊天页、从后台切回来：接上后端还在写的回复（离开页面不会取消生成）
+  useEffect(() => {
+    const setMsgs = (fn: (ms: Msg[]) => Msg[]) => set("messages", fn);
+    void resumeGenerations(setMsgs);
+    const onVis = () => { if (!document.hidden) { void refreshLive(); void resumeGenerations(setMsgs); } };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pageshow", onVis);
+    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pageshow", onVis); };
+  }, [set]);
+
   // 从工作台带入的预设指令：自动发送
   useEffect(() => {
     const preset = params.get("preset");
@@ -121,65 +134,20 @@ function Chat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
+  // 只清本页的小计时器；正在生成的回复放在页面外面，离开聊天页也会写完
   function clearAll() {
     timers.current.forEach(clearTimeout);
     timers.current = [];
-    abortRef.current?.abort();
-    abortRef.current = null;
   }
-  const patch = (id: string, p: Partial<Msg>) => set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, ...p } : m)));
 
-  /** 把最近 20 条消息发给后端，流式逐字回显 */
-  async function doChat(history: Msg[], errId?: string, regenerate = false) {
-    const echoId = errId ?? uid();
-    if (errId) {
-      patch(errId, { text: "", reasoning: undefined, note: undefined, status: "streaming", errorMessage: undefined, at: Date.now() });
-    } else {
-      set("messages", (ms) => [...ms, { id: echoId, role: "echo", text: "", status: "streaming", at: Date.now() }]);
-    }
-    setStreamingId(echoId);
-    setWorking("echo 正在想…");
-
-    const ac = new AbortController();
-    abortRef.current = ac;
-    const input = history.filter((m) => m.text).slice(-20).map((m) => ({ role: m.role, text: m.text }));
-    const userId = [...history].reverse().find((m) => m.role === "user")?.id;
-    let first = true;
-
-    try {
-      await api.chatStream(input, {
-        model: settings.model,
-        signal: ac.signal,
-        ids: { user: userId, echo: echoId },
-        regenerate,
-        onReasoning: (text) => {
-          if (first) { setWorking(null); first = false; }
-          set("messages", (ms) => ms.map((m) => m.id === echoId ? { ...m, reasoning: (m.reasoning || "") + text } : m));
-        },
-        onReasoningTranslated: (text) => patch(echoId, {reasoning: text}),
-        onNote: (text) => patch(echoId, { note: text }),
-        onDelta: (d) => {
-          if (first) { setWorking(null); first = false; }
-          set("messages", (ms) => ms.map((m) => (m.id === echoId ? { ...m, text: m.text + d } : m)));
-        },
-      });
-      patch(echoId, { status: "done" });
-    } catch (e) {
-      const aborted = (e as Error)?.name === "AbortError";
-      patch(echoId, {
-        status: aborted ? "stopped" : "error",
-        errorMessage: aborted ? undefined : (e as Error).message,
-      });
-    } finally {
-      setWorking(null);
-      setStreamingId(null);
-      abortRef.current = null;
-    }
+  /** 把最近 20 条消息发给后端，流式逐字回显；模型在这一刻定下，生成中途换模型不影响这一条 */
+  function doChat(history: Msg[], errId?: string, regenerate = false) {
+    void startGeneration({ set: (fn) => set("messages", fn), history, echoId: errId, regenerate, model: settings.model });
   }
 
   function sendText(raw: string) {
     const text = raw.trim();
-    if (!text || abortRef.current) return;
+    if (!text || live) return;
     followLatest.current = true;
     const userMsg: Msg = { id: uid(), role: "user", text, status: "done", at: Date.now() };
     set("messages", (ms) => [...ms, userMsg]);
@@ -194,17 +162,28 @@ function Chat() {
   }
 
   function stop() {
-    abortRef.current?.abort();
-    setWorking(null);
     setWork(null);
-    if (streamingId) patch(streamingId, { status: "stopped" });
+    void stopGeneration();
   }
 
-  function retry(errId: string) {
+  /** 重试：先把后端里那条失败的旧回复删掉（可能带着半截字），再用新的请求 ID 重来 */
+  async function retry(errId: string) {
     if (busy) return;
     const idx = messages.findIndex((m) => m.id === errId);
     if (idx < 0) return;
+    try { await api.deleteMessages([errId]); } catch {}
     doChat(messages.slice(0, idx), errId);
+  }
+
+  /** 报错卡片上的按钮：重试 / 去设置 / 重新登录 */
+  function onErrorAction(m: Msg, a: ReplyAction) {
+    if (a === "retry") return void retry(m.id);
+    if (a === "settings") return router.push("/settings");
+    if (a === "relogin") {
+      if (m.via === "codex" || settings.apiMode === "codex") return router.push("/settings");
+      if (ECHO_AUTH_ENABLED) return void window.dispatchEvent(new Event(ECHO_AUTH_REQUIRED_EVENT));
+      return router.push("/settings");
+    }
   }
 
   function answer(ok: boolean) {
@@ -379,7 +358,10 @@ function Chat() {
               {settings.models.map((md) => (
                 <button
                   key={md}
-                  onClick={() => { set("settings", (s) => ({ ...s, model: md })); setModelMenu(false); }}
+                  onClick={() => {
+                    set("settings", (s) => ({ ...s, model: md })); setModelMenu(false);
+                    if (live && md !== live.model) toast("这条还用原来的模型写完，新模型从下一条开始 ✿");
+                  }}
                   className={`flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left font-mono text-[14px] ${md === settings.model ? "bg-sakura/25 text-rose" : "text-ink"}`}
                 >
                   <span className="min-w-0 break-all">{md}</span>
@@ -493,7 +475,7 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} onMenu={openMenu} onRetry={() => retry(m.id)} />
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} />
           </div>
         ))}
         {working && (
@@ -668,7 +650,35 @@ function useLongPress(cb: (el: HTMLElement) => void, disabled: boolean, ms = 500
   };
 }
 
-function Bubble({ m, quiet, latest, selecting, onMenu, onRetry }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onRetry: () => void }) {
+const ACTION_LABEL: Record<ReplyAction, string> = { retry: "重试", settings: "去设置", relogin: "重新登录", continue: "接着说" };
+const KIND_ACTIONS: Record<string, ReplyAction[]> = {
+  login: ["relogin", "settings"], quota: ["settings", "retry"], network: ["retry"], param: ["settings", "retry"],
+  timeout: ["retry", "settings"], busy: ["retry"], other: ["retry", "settings"],
+};
+
+/** 出错卡片：说人话的原因 + 能做的事；已经写出的字照样留在上面的气泡里 */
+function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) => void; busy: boolean }) {
+  const acts = (m.actions?.length ? m.actions : KIND_ACTIONS[m.errorKind || "other"] || ["retry"]).filter((a) => a !== "continue");
+  return (
+    <div className="flex items-end gap-2 animate-rise">
+      {!m.text && <Avatar />}
+      <div className={`g reply-err ${m.text ? "ml-10" : ""}`} data-cssg data-tint="0.12" role="alert">
+        <p className="t">{m.text ? "这条没写完 (；´д｀)" : "回复失败了 (；´д｀)"}</p>
+        {m.errorMessage && <p className="d">{m.errorMessage}</p>}
+        {m.text && <p className="d mute">已经写出的字都留着</p>}
+        <div className="acts">
+          {acts.map((a) => (
+            <button key={a} type="button" disabled={busy && a === "retry"} onClick={() => onAction(a)} className={a === "retry" ? "on" : ""}>
+              {a === "retry" && <IconRetry size={15} />}{ACTION_LABEL[a]}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Bubble({ m, quiet, latest, selecting, onMenu, onAction, busy }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean }) {
   const mine = m.role === "user";
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} />
@@ -684,18 +694,11 @@ function Bubble({ m, quiet, latest, selecting, onMenu, onRetry }: { m: Msg; quie
       </div>
     );
   }
-  if (m.status === "error") {
+  if (m.status === "error" && !m.text) {
     return (
       <div className="pt-2">
         {thoughts}
-        <div className="flex items-end gap-2 animate-rise">
-          <Avatar />
-          <div className="rounded-[22px] rounded-bl-md border border-rose/40 bg-tile px-4 py-2.5">
-            <p className="text-[15px] text-rose">回复失败了 (；´д｀)</p>
-            {m.errorMessage && <p className="max-w-[65vw] break-words text-sm text-rose">{m.errorMessage}</p>}
-            <button onClick={onRetry} className="press mt-1.5 flex items-center gap-1.5 rounded-capsule bg-rose/10 px-3 py-1.5 text-[15px] text-rose"><IconRetry size={16} /> 重试</button>
-          </div>
-        </div>
+        <ErrorCard m={m} onAction={onAction} busy={busy} />
       </div>
     );
   }
@@ -719,11 +722,12 @@ function Bubble({ m, quiet, latest, selecting, onMenu, onRetry }: { m: Msg; quie
         </div>
         {mine && <div className="clear-both" />}
         {m.card && m.status === "done" && <ResultCard card={m.card} />}
-        {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成</p>}
+        {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
         {m.status !== "streaming" && <p className={`mt-1 px-2 text-[11px] opacity-80 ${mine ? "text-right" : ""}`} data-onwp>{fmtTime(m.at)}</p>}
       </div>
     </div>
+    {m.status === "error" && <div className="mt-1.5"><ErrorCard m={m} onAction={onAction} busy={busy} /></div>}
     </div>
   );
 }

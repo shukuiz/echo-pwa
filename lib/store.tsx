@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { seedFiles, seedMemory, seedMessages, seedReminders } from "./mock";
-import { api, ECHO_AUTH_ENABLED, type MemoryExtra, type ThinkingSettings } from "./api";
+import { api, ECHO_AUTH_ENABLED, type MemoryExtra, type ReplyAction, type ReplyErrorKind, type ThinkingSettings } from "./api";
 
 export type Role = "user" | "echo";
 export type Card =
@@ -18,6 +18,14 @@ export type Msg = {
   text: string;
   status?: "streaming" | "done" | "error" | "stopped";
   errorMessage?: string;
+  /** 出错原因分类和可以做的事（重试 / 去设置 / 重新登录） */
+  errorKind?: ReplyErrorKind;
+  actions?: ReplyAction[];
+  /** 这次生成的请求 ID：只有同一个 ID 的进度能改这条消息 */
+  genId?: string;
+  /** 生成这条时用的模型 / 连接 */
+  model?: string;
+  via?: string;
   reasoning?: string;
   /** 后端的小提示（比如思考参数被接口拒绝后已去掉重试） */
   note?: string;
@@ -177,6 +185,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             text: m.text ?? "",
             reasoning: typeof m.reasoning === "string" ? m.reasoning : undefined,
             note: typeof m.note === "string" ? m.note : undefined,
+            genId: typeof m.genId === "string" ? m.genId : undefined,
+            model: typeof m.model === "string" ? m.model : undefined,
+            via: typeof m.via === "string" ? m.via : undefined,
+            errorKind: typeof m.errorKind === "string" ? m.errorKind : undefined,
+            errorMessage: typeof m.errorMessage === "string" ? m.errorMessage : undefined,
             status: (m.status === "streaming" ? "stopped" : m.status ?? "done") as Msg["status"],
             at: m.at ?? Date.now(),
           })),

@@ -192,6 +192,7 @@ export class CodexBridge extends EventEmitter {
     if (turnId && !t.turnId) t.turnId = turnId;
     if (turnId && turnId !== t.turnId) return;
     t.touch();
+    t.onActivity?.();
     switch (method) {
       case "item/started": {
         const it = p.item || {};
@@ -319,6 +320,7 @@ export class CodexBridge extends EventEmitter {
     const finished = new Promise((resolve) => {
       const turn = {
         threadId, turnId: "", phase: new Map(), error: "",
+        onActivity: handlers.onActivity,
         onTool: (label) => { handlers.onThought?.((lastKey.thought ? "\n\n" : "") + `（${label}）`); lastKey.thought = "tool"; },
         emit: (kind, delta, key) => {
           if (!delta) return;
@@ -355,6 +357,14 @@ export class CodexBridge extends EventEmitter {
     }
     const result = await finished;
     return { ...result, note };
+  }
+
+  /** 超时 / 停止：先请 Codex 停下；几秒内没停（还没拿到 turnId 之类）就直接结束这一轮 */
+  async abortTurn(wait = 3000) {
+    const t = this.turn;
+    if (!t) return;
+    await this.interrupt().catch(() => {});
+    setTimeout(() => { if (this.turn === t) this.#finishTurn({ status: "interrupted", error: "" }); }, wait).unref?.();
   }
 
   async interrupt() {
