@@ -6,6 +6,7 @@
 // 美化页用「草稿」：改动立刻预览，点「保存」才落盘；桌面编辑、设置页的重点色仍是自动保存。
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { accentFamily } from "./color";
 
 export type ThemeKind = "glass" | "real";
 export type WidgetType = "clock" | "photo" | "echo" | "remind" | "note" | "calendar" | "countdown" | "gif";
@@ -230,6 +231,10 @@ function writeLocal(b: Beauty) {
   try { localStorage.setItem(BEAUTY_KEY, JSON.stringify(b)); return true; } catch { return false; }
 }
 
+function readBack(b: Beauty) {
+  try { return localStorage.getItem(BEAUTY_KEY) === JSON.stringify(b); } catch { return false; }
+}
+
 export type SaveResult = { local: boolean; cloud: "ok" | "offline" | "skipped" };
 
 type Ctx = {
@@ -300,24 +305,16 @@ export function BeautyProvider({ children }: { children: React.ReactNode }) {
     return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", onVis); };
   }, [ready, persist]);
 
+  // 重点色：默认色也一样写进变量（以前默认色会把变量删掉，各处退回各自写死的粉色）
   useEffect(() => {
     const root = document.documentElement.style;
-    const rgb = b.accent.slice(1).match(/.{2}/g)?.map((channel) => parseInt(channel, 16));
-    if (!rgb) return;
-    root.setProperty("--accent", rgb.join(" "));
-    const luminance = rgb.reduce((sum, channel, i) => {
-      const srgb = channel / 255;
-      return sum + [0.2126, 0.7152, 0.0722][i] * (srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4);
-    }, 0);
-    const ink = luminance > 0.179 ? "#171417" : "#fff";
-    root.setProperty("--accent-ink", ink);
-    if (b.accent.toLowerCase() === DEFAULT_ACCENT) {
-      root.removeProperty("--desktop-accent");
-      root.removeProperty("--desktop-accent-ink");
-    } else {
-      root.setProperty("--desktop-accent", b.accent);
-      root.setProperty("--desktop-accent-ink", ink);
-    }
+    const accent = isHex(b.accent) ? b.accent.toLowerCase() : DEFAULT_ACCENT;
+    const fam = accentFamily(accent);
+    for (const k in fam) root.setProperty(k, fam[k]);
+    root.setProperty("--accent", fam["--hl-rgb"]);
+    root.setProperty("--accent-ink", fam["--hl-ink"]);
+    root.setProperty("--desktop-accent", accent);
+    root.setProperty("--desktop-accent-ink", fam["--hl-ink"]);
   }, [b.accent]);
 
   const setB: Ctx["setB"] = useCallback((patch) => {
@@ -347,14 +344,24 @@ export function BeautyProvider({ children }: { children: React.ReactNode }) {
 
   const save = useCallback(async (): Promise<SaveResult> => {
     clearTimeout(saveT.current);
-    const next = { ...bRef.current, savedAt: Date.now() };
-    const local = persist(next);
+    let next = { ...bRef.current, savedAt: Math.max(Date.now(), (savedRef.current.savedAt || 0) + 1) };
+    // 写完再读回来对一遍：iOS 存储满 / 无痕时 setItem 可能不报错却没写进去
+    const local = persist(next) && readBack(next);
     setState(next);
     setDirty(false);
     try {
       await api.putBeauty(next, next.savedAt);
       return { local, cloud: "ok" };
-    } catch {
+    } catch (e) {
+      // 409：云端那份的时间更「新」（别的设备时钟快、或旧页面刚自动保存过）。
+      // 手动点「保存」= 你现在看到的就是要的，抬高时间戳再存一次，不然下次打开会被云端旧样子盖回去
+      const remoteAt = (e as { status?: number; savedAt?: number }).status === 409 ? Number((e as { savedAt?: number }).savedAt) : NaN;
+      if (Number.isFinite(remoteAt)) {
+        next = { ...next, savedAt: remoteAt + 1 };
+        persist(next);
+        setState(next);
+        try { await api.putBeauty(next, next.savedAt); return { local, cloud: "ok" }; } catch {}
+      }
       return { local, cloud: "offline" };
     }
   }, [persist]);

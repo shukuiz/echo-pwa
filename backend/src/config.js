@@ -1,6 +1,7 @@
 // 后端配置读写：API Key / 接口地址只存后端 settings，绝不进前端代码、不进 Git、不打印日志
 import { randomBytes } from "node:crypto";
 import { paths, readJSON, writeJSON, DATA_DIR } from "./storage.js";
+import { DEFAULT_THINKING, normThinking } from "./thinking.js";
 
 // 官方接口地址：官方 API 模式下固定使用，不需要用户填写
 // Anthropic 走官方 OpenAI 兼容层（https://api.anthropic.com/v1/），复用同一套 /chat/completions 转发
@@ -17,7 +18,8 @@ const DEFAULT_CONFIG = {
   provider: "openai", // 官方模式下的厂商：openai | deepseek | anthropic
   officialKeys: {}, // { openai: "sk-…", deepseek: "…", anthropic: "…" } 各官方 Key 分开保存，切换不丢
   officialModels: {},
-  presets: [], // 自定义预设：[{ id, name, url, apiKey }]
+  officialThinking: {}, // { openai: {mode, format, effort, budget, extra, cotPrompt} } 每个官方连接各自的思考设置
+  presets: [], // 自定义预设：[{ id, name, url, apiKey, model?, thinking? }]
   activePresetId: "",
   anthropicWorkspaceId: "", // 可选：未限定 workspace 的 Claude 个人/服务账户 Key 需要带 anthropic-workspace-id
   model: "gpt-4o-mini",
@@ -62,7 +64,7 @@ function migrate(raw) {
 export async function getRawConfig() {
   const raw = await readJSON(paths.config(DATA_DIR), {});
   const stored = migrate(raw);
-  return { ...DEFAULT_CONFIG, ...stored, officialKeys: { ...stored.officialKeys }, officialModels: { ...stored.officialModels }, presets: stored.presets || [] };
+  return { ...DEFAULT_CONFIG, ...stored, officialKeys: { ...stored.officialKeys }, officialModels: { ...stored.officialModels }, officialThinking: { ...stored.officialThinking }, presets: stored.presets || [] };
 }
 
 /** 当前生效的上游：官方厂商或选中的自定义预设 */
@@ -75,11 +77,17 @@ export function activeUpstream(raw) {
   return { kind: provider, proxyUrl: OFFICIAL_BASES[provider], apiKey: raw.officialKeys?.[provider] || "" };
 }
 
-/** 读取完整配置：附带当前生效的 provider / proxyUrl / apiKey，供聊天与模型请求使用 */
+/** 当前连接的思考设置（没设置过 = 关） */
+export function activeThinking(raw, up = activeUpstream(raw)) {
+  const t = up.preset ? up.preset.thinking : raw.officialThinking?.[up.kind];
+  return { ...DEFAULT_THINKING, ...(t && typeof t === "object" ? t : {}), saved: !!(t && typeof t === "object") };
+}
+
+/** 读取完整配置：附带当前生效的 provider / proxyUrl / apiKey / thinking，供聊天与模型请求使用 */
 export async function getConfig() {
   const raw = await getRawConfig();
   const up = activeUpstream(raw);
-  return { ...raw, provider: up.kind, proxyUrl: up.proxyUrl, apiKey: up.apiKey };
+  return { ...raw, provider: up.kind, proxyUrl: up.proxyUrl, apiKey: up.apiKey, thinking: activeThinking(raw, up) };
 }
 
 /** 合并写入原始配置 */
@@ -132,9 +140,10 @@ export async function applySettingsPatch(body) {
     }
 
     if (official) {
-      const { provider, model, apiKey, anthropicWorkspaceId, activate } = official;
+      const { provider, model, apiKey, anthropicWorkspaceId, activate, thinking } = official;
       if (!OFFICIAL_PROVIDERS.includes(provider)) throw new Error("未知的官方服务");
       next.officialModels[provider] = draftModel(model);
+      if (thinking !== undefined) next.officialThinking[provider] = normThinking(thinking, next.officialThinking[provider]);
       if (typeof apiKey === "string") next.officialKeys[provider] = apiKey.trim();
       if (provider === "anthropic" && typeof anthropicWorkspaceId === "string") {
         next.anthropicWorkspaceId = anthropicWorkspaceId.trim();
@@ -184,7 +193,7 @@ function checkUrl(url) {
 }
 
 /** 旧客户端默认设为当前，新设置页显式保存或切换。 */
-export async function createPreset({ name, url, apiKey, model, activate = true }) {
+export async function createPreset({ name, url, apiKey, model, thinking, activate = true }) {
   return updateConfig((raw) => {
     if (raw.presets.length >= MAX_PRESETS) throw new Error(`最多保存 ${MAX_PRESETS} 个连接`);
     const preset = {
@@ -193,6 +202,7 @@ export async function createPreset({ name, url, apiKey, model, activate = true }
       url: checkUrl(url),
       apiKey: String(apiKey || "").trim(),
       ...(model !== undefined ? { model: draftModel(model) } : {}),
+      ...(thinking !== undefined ? { thinking: normThinking(thinking) } : {}),
     };
     if (activate) {
       setActiveModel(raw, raw.model);
@@ -218,6 +228,7 @@ export async function updatePreset(id, patch) {
     }
     if (typeof patch.apiKey === "string") preset.apiKey = patch.apiKey.trim();
     if (patch.model !== undefined) preset.model = draftModel(patch.model);
+    if (patch.thinking !== undefined) preset.thinking = normThinking(patch.thinking, preset.thinking);
     if (patch.activate === true && activeUpstream(raw).preset !== preset) {
       if (!preset.model) throw new Error("请先设置默认聊天模型");
       setActiveModel(raw, raw.model);
@@ -308,7 +319,9 @@ export function publicConfig(raw) {
     presets: presets.map((p) => ({
       id: p.id, name: p.name, url: p.url, hasKey: !!p.apiKey, keyMask: maskKey(p.apiKey),
       model: p === up.preset ? raw.model : p.model || "",
+      thinking: { ...DEFAULT_THINKING, ...(p.thinking || {}) },
     })),
+    officialThinking: Object.fromEntries(OFFICIAL_PROVIDERS.map((p) => [p, { ...DEFAULT_THINKING, ...(raw.officialThinking?.[p] || {}) }])),
     hasKey: !!up.apiKey,
     apiKeyMask: maskKey(up.apiKey),
     ...memoryManagement(up),

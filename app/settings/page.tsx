@@ -6,6 +6,8 @@ import { Hand, useStore } from "@/lib/store";
 import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
 import { DEFAULT_ACCENT, useBeauty } from "@/lib/beauty";
 import ChatConnectionSettings from "./ChatConnectionSettings";
+import { openUpdateNotes } from "@/components/UpdateNotes";
+import { APP_VERSION } from "@/lib/version";
 
 // 计划接入的 MCP 服务（与后端 /api/tools 一致），后期接入
 const MCP_SERVERS = [
@@ -92,6 +94,16 @@ export default function SettingsPage() {
               </label>
               <button type="button" className="btn-ghost min-h-10 shrink-0 px-3 text-[13px]" onClick={() => setB({ accent: DEFAULT_ACCENT })}>恢复默认</button>
             </div>
+          </div>
+        </SettingsDrawer>
+
+        <SettingsDrawer title="关于">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3 text-[15px]">
+              <span>版本</span>
+              <span className="font-mono text-mute">v{APP_VERSION}</span>
+            </div>
+            <button type="button" className="btn-ghost min-h-11 w-full" onClick={openUpdateNotes}>更新公告</button>
           </div>
         </SettingsDrawer>
 

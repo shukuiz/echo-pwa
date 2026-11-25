@@ -133,7 +133,7 @@ function Chat() {
   async function doChat(history: Msg[], errId?: string, regenerate = false) {
     const echoId = errId ?? uid();
     if (errId) {
-      patch(errId, { text: "", reasoning: undefined, status: "streaming", errorMessage: undefined, at: Date.now() });
+      patch(errId, { text: "", reasoning: undefined, note: undefined, status: "streaming", errorMessage: undefined, at: Date.now() });
     } else {
       set("messages", (ms) => [...ms, { id: echoId, role: "echo", text: "", status: "streaming", at: Date.now() }]);
     }
@@ -156,6 +156,7 @@ function Chat() {
           if (first) { setWorking(null); first = false; }
           set("messages", (ms) => ms.map((m) => m.id === echoId ? { ...m, reasoning: (m.reasoning || "") + text } : m));
         },
+        onNote: (text) => patch(echoId, { note: text }),
         onDelta: (d) => {
           if (first) { setWorking(null); first = false; }
           set("messages", (ms) => ms.map((m) => (m.id === echoId ? { ...m, text: m.text + d } : m)));
@@ -604,14 +605,17 @@ function Avatar() {
   );
 }
 
-function ThinkLine({ think, defaultOpen = false }: { think: Think; defaultOpen?: boolean }) {
+function ThinkLine({ think, defaultOpen = false, live = false }: { think: Think; defaultOpen?: boolean; live?: boolean }) {
   const [expanded, setExpanded] = useState<boolean>();
   const open = expanded ?? defaultOpen;
+  const box = useRef<HTMLParagraphElement>(null);
+  // 边想边写：展开时跟着滚到最新一行
+  useEffect(() => { if (live && open && box.current) box.current.scrollTop = box.current.scrollHeight; }, [think.text, live, open]);
   return (
     <div className="mb-1.5 pl-10">
       <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]" data-onwp>
-        <button aria-expanded={open} onClick={() => setExpanded(!open)} className="flex min-h-9 items-center gap-1">
-          <IconClock size={14} /> 思考过程 <IconChevron size={13} className={`transition ${open ? "" : "-rotate-90"}`} />
+        <button aria-expanded={open} onClick={() => setExpanded(!open)} className="flex min-h-11 items-center gap-1">
+          <IconClock size={14} /> {live ? <>正在思考<span className="animate-blink">…</span></> : "思考过程"} <IconChevron size={13} className={`transition ${open ? "" : "-rotate-90"}`} />
         </button>
         {think.tags.map((t, i) => (
           <span key={i} className={`flex items-center gap-1 rounded-capsule px-2 py-0.5 [text-shadow:none] ${t.kind === "memory" ? "bg-sakura/60 text-rose" : "bg-white/50 text-[#3d393b]"}`}>
@@ -621,7 +625,7 @@ function ThinkLine({ think, defaultOpen = false }: { think: Think; defaultOpen?:
         ))}
       </div>
       {open && (
-        <p className="mt-1.5 max-w-full whitespace-pre-wrap break-words rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute">{think.text}</p>
+        <p ref={box} className={`thinkbox mt-1.5 max-w-full whitespace-pre-wrap break-words rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute ${live ? "max-h-40 overflow-y-auto" : ""}`}>{think.text}</p>
       )}
     </div>
   );
@@ -666,7 +670,7 @@ function useLongPress(cb: (el: HTMLElement) => void, disabled: boolean, ms = 500
 function Bubble({ m, quiet, latest, selecting, onMenu, onRetry }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onRetry: () => void }) {
   const mine = m.role === "user";
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
-  const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} />
+  const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} />
     : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} />
     : !mine && latest && m.status === "done" && m.text
       ? <p className="mb-1 pl-10 text-[12px]" data-onwp>这条回复没有收到模型提供的思考内容</p> : null;
@@ -675,6 +679,7 @@ function Bubble({ m, quiet, latest, selecting, onMenu, onRetry }: { m: Msg; quie
       <div className="pt-2">
         {thoughts}
         {m.status === "stopped" && <p className="pl-10 text-[12px]" data-onwp>已停止生成</p>}
+        {m.note && <p className="pl-10 text-[12px]" data-onwp>{m.note}</p>}
       </div>
     );
   }
@@ -714,6 +719,7 @@ function Bubble({ m, quiet, latest, selecting, onMenu, onRetry }: { m: Msg; quie
         {mine && <div className="clear-both" />}
         {m.card && m.status === "done" && <ResultCard card={m.card} />}
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成</p>}
+        {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
         {m.status !== "streaming" && <p className={`mt-1 px-2 text-[11px] opacity-80 ${mine ? "text-right" : ""}`} data-onwp>{fmtTime(m.at)}</p>}
       </div>
     </div>
