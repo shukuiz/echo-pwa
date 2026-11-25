@@ -18,6 +18,9 @@ fails = []
 TH = "JSON.parse(localStorage.getItem('echo-beauty-v1')||'{}').theme"
 CLS = "document.documentElement.className"
 VIEW = {"width": 393, "height": 852}
+import re
+_ver = open(os.path.join(os.path.dirname(__file__), "..", "lib", "version.ts"), encoding="utf-8").read()
+APP_VERSION = re.search(r'APP_VERSION = "([^"]+)"', _ver).group(1)
 
 
 def ok(cond, msg):
@@ -36,6 +39,8 @@ def cloud_theme():
 
 async def new_page(br, **kw):
     ctx = await br.new_context(viewport=VIEW, device_scale_factor=2, **kw)
+    # 更新公告看过了（不然它会盖在页面上）
+    await ctx.add_init_script(f"try{{localStorage.setItem('echo-seen-version','{APP_VERSION}')}}catch(e){{}}")
     pg = await ctx.new_page()
     pg.on("pageerror", lambda e: fails.append(f"page error: {e}"))
     return ctx, pg

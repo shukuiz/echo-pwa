@@ -447,3 +447,23 @@ html.th-real .bty .pv .pvicn { border-radius: 13px; }
   .grp-b, .grp-in, .grp-c, .topsave { transition: none; }
   .pv-hi { animation: none; }
 }
+
+/* ================= 更新公告 ================= */
+.unotes { font-family: inherit; }
+.unotes .sh-h { margin-bottom: 4px; }
+.unotes .sh-h b { font-family: "ZhiSong", "Songti SC", -apple-system, "PingFang SC", serif; font-size: 21px; }
+.unotes .uv { font-size: 12px; color: #8a93a1; font-variant-numeric: tabular-nums; }
+.ulead { font-size: 14px; color: var(--hl-text-d); margin: 2px 0 12px; font-weight: 600; }
+.ulist { list-style: none; padding: 0; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; counter-reset: u; }
+.ulist li { position: relative; background: #fff; border-radius: 18px; padding: 11px 14px 12px 44px; box-shadow: 0 1px 3px rgba(18,28,45,.06); counter-increment: u; }
+.ulist li::before { content: counter(u); position: absolute; left: 13px; top: 12px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; background: var(--hl-soft); color: var(--hl-soft-ink); }
+.ulist li:nth-child(even)::before { background: var(--hl-alt); color: var(--hl-alt-ink); }
+.ulist b { display: block; font-size: 15px; line-height: 1.4; color: #26303d; }
+.ulist span { display: block; font-size: 13px; line-height: 1.6; color: #5d6676; margin-top: 2px; }
+.uold { font-size: 13px; color: #5d6676; margin-bottom: 12px; } .uold summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.ubtn { background: var(--hl) !important; color: var(--hl-ink) !important; }
+.uhint { text-align: center; font-size: 12px; color: #8a93a1; margin-top: 10px; }
+html.dark .unotes { background: rgba(36,38,46,.9); color: #eef1f6; }
+html.dark .ulist li { background: rgba(255,255,255,.07); } html.dark .ulist b { color: #eef1f6; } html.dark .ulist span, html.dark .uold { color: #b9c0cc; }
+html.dark .ulead { color: var(--hl-text-l); }
