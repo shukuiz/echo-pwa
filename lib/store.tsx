@@ -31,6 +31,8 @@ export type Msg = {
   note?: string;
   at: number;
   card?: Card;
+  /** 用户发的图片（base64 dataURL）：只随这一次请求走，绝不写入 localStorage */
+  images?: string[];
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
 };
 
@@ -166,7 +168,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     try {
-      localStorage.setItem(KEY, JSON.stringify(ECHO_AUTH_ENABLED ? { theme: state.theme } : state));
+      // 图片不持久化：写盘前把每条消息里的 images 剥掉，避免几 MB base64 撑爆 localStorage
+      const persist = ECHO_AUTH_ENABLED
+        ? { theme: state.theme }
+        : { ...state, messages: state.messages.map((m) => (m.images && m.images.length ? { ...m, images: undefined } : m)) };
+      localStorage.setItem(KEY, JSON.stringify(persist));
     } catch {}
   }, [state, ready]);
 

@@ -144,6 +144,8 @@ export type RecallHit = { id: string; tab?: string; kind?: MemoryKind; title: st
 export interface ChatMsgInput {
   role: ApiRole;
   text: string;
+  /** 图片（base64 dataURL）：随消息发给后端，由 Codex/模型看图；不会持久化 */
+  images?: string[];
 }
 
 /** 流式聊天：onDelta 每次收到增量文本；signal 用于停止生成 */

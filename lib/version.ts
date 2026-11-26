@@ -1,10 +1,17 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.11.1";
+export const APP_VERSION = "0.11.2";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.11.2", date: "2026-11-26", title: "能发图了，还能让 echo 看图 ✿",
+    items: [
+      { t: "收图 · 读图", d: "聊天输入框旁的「附件」现在是真能选图了：可多选、最多 4 张，会自动压小再发。echo（Codex 模式）能看懂你发的图并据此回答。图片只在这次对话里用，不存服务器、不写本地，刷新后自然消失，聊天记录依旧只留文字" },
+      { t: "看图", d: "你发出的图会显示在气泡里，点一下可放大看；纯发图不写字也能发出去" },
+    ],
+  },
   {
     version: "0.11.1", date: "2026-11-26", title: "回复像聊天一样分气泡 ✿",
     items: [

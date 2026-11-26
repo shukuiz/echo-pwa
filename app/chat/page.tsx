@@ -18,6 +18,36 @@ import { GIcon } from "@/components/glass/Wall";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
 type Menu = { id: string; mine: boolean; rect: { top: number; left: number; width: number; height: number }; text: string; cls: string };
+
+/** 把选中的图片压到长边 ≤1280、JPEG 0.78，返回 dataURL；手机大图直接发会卡、也容易超限 */
+function compressImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("image"));
+      img.onload = () => {
+        const max = 1280;
+        let { width, height } = img;
+        if (width > max || height > max) {
+          const r = Math.min(max / width, max / height);
+          width = Math.round(width * r);
+          height = Math.round(height * r);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("ctx"));
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.78));
+      };
+      img.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
 type Work = {
   hand: string;
   branch: string;
@@ -75,6 +105,8 @@ function Chat() {
   const [anchor, setAnchor] = useState<string | null>(null);
   const [askDel, setAskDel] = useState<string[] | null>(null);
   const [modelMenu, setModelMenu] = useState(false);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const [winTitle, setWinTitle] = useState("");
@@ -164,20 +196,37 @@ function Chat() {
     void startGeneration({ set: (fn) => set("messages", fn), history, echoId: errId, regenerate, model: settings.model });
   }
 
-  function sendText(raw: string) {
+  function sendText(raw: string, imgs: string[] = []) {
     const text = raw.trim();
-    if (!text || live) return;
+    if ((!text && imgs.length === 0) || live) return;
     followLatest.current = true;
-    const userMsg: Msg = { id: uid(), role: "user", text, status: "done", at: Date.now() };
+    const userMsg: Msg = { id: uid(), role: "user", text, status: "done", at: Date.now(), ...(imgs.length ? { images: imgs } : {}) };
     set("messages", (ms) => [...ms, userMsg]);
     doChat([...messagesRef.current, userMsg]);
   }
 
   function send() {
-    if (!input.trim() || busy || confirm) return;
-    sendText(input);
+    if ((!input.trim() && pendingImages.length === 0) || busy || confirm) return;
+    const imgs = pendingImages;
+    sendText(input, imgs);
     setInput("");
+    setPendingImages([]);
     setModelMenu(false);
+  }
+
+  async function onPickImages(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    const room = 4 - pendingImages.length;
+    if (room <= 0) { toast("最多 4 张图"); return; }
+    if (files.length > room) toast("最多 4 张图");
+    const out: string[] = [];
+    for (const f of files.slice(0, room)) {
+      if (!f.type.startsWith("image/")) continue;
+      try { out.push(await compressImage(f)); } catch {}
+    }
+    if (out.length) setPendingImages((prev) => [...prev, ...out].slice(0, 4));
   }
 
   function stop() {
@@ -395,6 +444,22 @@ function Chat() {
       )}
 
         <div className="g cbar px-3 pb-2.5 pt-2" data-cssg data-tint="0.08" style={{ "--r": "28px" } as React.CSSProperties}>
+          <input ref={imgInputRef} type="file" accept="image/*" multiple onChange={onPickImages} className="hidden" />
+          {pendingImages.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-1.5 px-1">
+              {pendingImages.map((src, i) => (
+                <div key={i} className="relative">
+                  <img src={src} alt="" className="h-16 w-16 rounded-xl object-cover" />
+                  <button
+                    type="button"
+                    aria-label="移除这张"
+                    onClick={() => setPendingImages((p) => p.filter((_, j) => j !== i))}
+                    className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-ink text-cream text-[12px]"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={input}
@@ -407,7 +472,7 @@ function Chat() {
             className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
-            <button aria-label="附件" onClick={() => toast("附件先占位，P1 接上")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
+            <button aria-label="附件" onClick={() => imgInputRef.current?.click()} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
               <IconClip size={18} />
             </button>
             <button aria-label="语音" onClick={() => toast("语音先占位")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
@@ -425,7 +490,7 @@ function Chat() {
                 <IconStop size={18} />
               </button>
             ) : (
-              <button aria-label="发送" onClick={send} disabled={!input.trim() || !!confirm} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-[color:var(--accent-ink)] disabled:bg-orb/45">
+              <button aria-label="发送" onClick={send} disabled={(!input.trim() && pendingImages.length === 0) || !!confirm} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-[color:var(--accent-ink)] disabled:bg-orb/45">
                 <IconSend size={18} />
               </button>
             )}
@@ -719,19 +784,21 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
 
 function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean }) {
   const mine = m.role === "user";
+  const [zoom, setZoom] = useState<string | null>(null);
+  const hasImages = !!(m.images && m.images.length);
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} />
     : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} />
     : !mine && latest && m.status === "done" && m.text
       ? <p className="mb-1 pl-10 text-[12px]" data-onwp>这条回复没有收到模型提供的思考内容</p> : null;
   // 只拆「echo 的、生成完成的、开关打开的、短回复」；流式/我方/小作文都保持单气泡
-  const parts = !mine && split && m.status === "done" && m.text ? splitTextIntoBubbles(m.text) : [m.text];
+  const parts = m.text ? (!mine && split && m.status === "done" ? splitTextIntoBubbles(m.text) : [m.text]) : [];
   const multi = parts.length > 1;
   const bubbleClass = (p: string) => `g bub inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
     mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
   }${multi ? " animate-rise" : ""}`;
   const bubbleStyle = (i: number) => multi ? { animationDelay: `${i * 0.28}s`, animationFillMode: "both" as const } : undefined;
-  if (!m.text && !m.card && m.status !== "error") {
+  if (!m.text && !m.card && !hasImages && m.status !== "error") {
     return thoughts && (
       <div className="pt-2">
         {thoughts}
@@ -754,6 +821,15 @@ function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy }: 
     <div className={`flex items-end gap-2 ${mine ? "justify-end" : ""}`}>
       {!mine && <Avatar />}
       <div className={`max-w-[80%] ${m.card && m.status === "done" ? "w-[80%]" : ""}`}>
+        {hasImages && (
+          <div className={`mb-1.5 flex flex-wrap gap-1.5 ${mine ? "justify-end" : ""}`}>
+            {m.images!.map((src, i) => (
+              <button key={i} type="button" onClick={() => setZoom(src)} className="press overflow-hidden rounded-xl">
+                <img src={src} alt="" className="h-24 w-24 object-cover" />
+              </button>
+            ))}
+          </div>
+        )}
         <div className={multi ? `flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}>
           {parts.map((p, i) => (
             <div
@@ -778,6 +854,11 @@ function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy }: 
       </div>
     </div>
     {m.status === "error" && <div className="mt-1.5"><ErrorCard m={m} onAction={onAction} busy={busy} /></div>}
+    {zoom && (
+      <div className="fixed inset-0 z-[80] grid place-items-center bg-black/80 p-4" onClick={() => setZoom(null)}>
+        <img src={zoom} alt="" className="max-h-[88vh] max-w-[92vw] rounded-lg object-contain" />
+      </div>
+    )}
     </div>
   );
 }

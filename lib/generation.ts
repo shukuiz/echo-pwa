@@ -81,7 +81,10 @@ export async function startGeneration(opts: {
   const controller = new AbortController();
   ac = controller;
   streamLen = 0;
-  const input = opts.history.filter((m) => m.text).slice(-20).map((m) => ({ role: m.role, text: m.text }));
+  const input = opts.history
+    .filter((m) => m.text || (m.images && m.images.length))
+    .slice(-20)
+    .map((m) => ({ role: m.role, text: m.text, ...(m.images && m.images.length ? { images: m.images } : {}) }));
   const userId = [...opts.history].reverse().find((m) => m.role === "user")?.id;
   try {
     await api.chatStream(input, {
