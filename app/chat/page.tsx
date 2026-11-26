@@ -37,7 +37,7 @@ const fmtDur = (ms: number) => {
 };
 
 /** 把一条短回复按句末标点断成多个气泡；长回复/小作文原样返回一个。纯函数，方便测试。 */
-export function splitTextIntoBubbles(text: string): string[] {
+function splitTextIntoBubbles(text: string): string[] {
   const s = String(text ?? "");
   if (!s.trim()) return [s];
   const ellipses: string[] = [];
