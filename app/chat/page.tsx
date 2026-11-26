@@ -36,6 +36,23 @@ const fmtDur = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
+/** 把一条短回复按句末标点断成多个气泡；长回复/小作文原样返回一个。纯函数，方便测试。 */
+export function splitTextIntoBubbles(text: string): string[] {
+  const s = String(text ?? "");
+  if (!s.trim()) return [s];
+  const ellipses: string[] = [];
+  const masked = s.replace(/\.\.\.|……|···/g, (m) => {
+    ellipses.push(m);
+    return `\uE000${ellipses.length - 1}\uE001`;
+  });
+  const restore = (p: string) => p.replace(/\uE000(\d+)\uE001/g, (_, i) => ellipses[Number(i)]).trim();
+  const raw = masked.split(/(?<=[。！？!?\n])|(?<=\.)(?![0-9a-zA-Z])/);
+  const parts = raw.map(restore).filter((p) => p.length > 0);
+  const counted = [...s].length;
+  if (counted > 120 || parts.length > 5) return [s];
+  return parts.length ? parts : [s];
+}
+
 export default function ChatPage() {
   return (
     <Suspense>
@@ -429,18 +446,32 @@ function Chat() {
         </Link>
       }
       sub={
-        <button
-          onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}
-          className="mute flex items-center gap-1.5 text-[12px]"
-          role="switch"
-          aria-checked={!quiet}
-          aria-label="自动展开思考"
-        >
-          {busy ? "忙碌中 · " : ""}自动展开思考
-          <span className={`relative h-[16px] w-[28px] rounded-capsule transition ${!quiet ? "bg-rose" : "bg-orb/35"}`}>
-            <span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white transition-all ${!quiet ? "left-[14px]" : "left-[2px]"}`} />
-          </span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}
+            className="mute flex items-center gap-1.5 text-[12px]"
+            role="switch"
+            aria-checked={!quiet}
+            aria-label="自动展开思考"
+          >
+            {busy ? "忙碌中 · " : ""}自动展开思考
+            <span className={`relative h-[16px] w-[28px] rounded-capsule transition ${!quiet ? "bg-rose" : "bg-orb/35"}`}>
+              <span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white transition-all ${!quiet ? "left-[14px]" : "left-[2px]"}`} />
+            </span>
+          </button>
+          <button
+            onClick={() => set("settings", (s) => ({ ...s, splitBubbles: !s.splitBubbles }))}
+            className="mute flex items-center gap-1.5 text-[12px]"
+            role="switch"
+            aria-checked={!!settings.splitBubbles}
+            aria-label="分气泡显示"
+          >
+            分气泡
+            <span className={`relative h-[16px] w-[28px] rounded-capsule transition ${settings.splitBubbles ? "bg-rose" : "bg-orb/35"}`}>
+              <span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white transition-all ${settings.splitBubbles ? "left-[14px]" : "left-[2px]"}`} />
+            </span>
+          </button>
+        </div>
       }
     >
       {confirm && (
@@ -483,7 +514,7 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} />
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} />
           </div>
         ))}
         {working && (
@@ -686,13 +717,20 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, onMenu, onAction, busy }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean }) {
+function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean }) {
   const mine = m.role === "user";
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} />
     : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} />
     : !mine && latest && m.status === "done" && m.text
       ? <p className="mb-1 pl-10 text-[12px]" data-onwp>这条回复没有收到模型提供的思考内容</p> : null;
+  // 只拆「echo 的、生成完成的、开关打开的、短回复」；流式/我方/小作文都保持单气泡
+  const parts = !mine && split && m.status === "done" && m.text ? splitTextIntoBubbles(m.text) : [m.text];
+  const multi = parts.length > 1;
+  const bubbleClass = (p: string) => `g bub inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
+    mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
+  }${multi ? " animate-rise" : ""}`;
+  const bubbleStyle = (i: number) => multi ? { animationDelay: `${i * 0.28}s`, animationFillMode: "both" as const } : undefined;
   if (!m.text && !m.card && m.status !== "error") {
     return thoughts && (
       <div className="pt-2">
@@ -716,17 +754,21 @@ function Bubble({ m, quiet, latest, selecting, onMenu, onAction, busy }: { m: Ms
     <div className={`flex items-end gap-2 ${mine ? "justify-end" : ""}`}>
       {!mine && <Avatar />}
       <div className={`max-w-[80%] ${m.card && m.status === "done" ? "w-[80%]" : ""}`}>
-        <div
-          {...press}
-          data-cssg
-          data-hue={mine ? "me" : undefined}
-          data-tint={mine ? "0.22" : undefined}
-          className={`g bub inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
-            mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
-          }`}
-        >
-          {m.text}
-          {m.status === "streaming" && <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-rose" />}
+        <div className={multi ? `flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}>
+          {parts.map((p, i) => (
+            <div
+              key={i}
+              {...(i === 0 ? press : {})}
+              data-cssg
+              data-hue={mine ? "me" : undefined}
+              data-tint={mine ? "0.22" : undefined}
+              className={bubbleClass(p)}
+              style={bubbleStyle(i)}
+            >
+              {p}
+              {m.status === "streaming" && i === parts.length - 1 && <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-rose" />}
+            </div>
+          ))}
         </div>
         {mine && <div className="clear-both" />}
         {m.card && m.status === "done" && <ResultCard card={m.card} />}

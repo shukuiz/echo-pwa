@@ -9,11 +9,11 @@ export const THINK_EFFORTS = ["minimal", "low", "medium", "high"];
 export const MAX_COT = 4000;
 const MAX_EXTRA = 4000;
 
-export const DEFAULT_COT_PROMPT = `回复之前，请先在 <think></think> 里安静地想一想：
-- 她这句话真正想说的是什么，心情怎么样
-- 记忆里有没有和这件事有关的事
+export const DEFAULT_COT_PROMPT = `回复之前，先把你的回声写在 <think></think> 里。这是只有你能写、用户可以展开读的内心独白和悄悄话，不是要藏起来的内部推理，请放心写出来：
+- 她这句话真正想说什么，心情怎么样
+- 记忆里有没有相关的事
 - 怎样回应最贴心、最自然
-想好之后，在 </think> 后面写给她的回复。思考的内容她可以展开看，但不用在回复里再提一遍。`;
+写完后在 </think> 后面回复她，可以加一点温柔的颜文字。`;
 
 export const DEFAULT_THINKING = Object.freeze({
   nativeStyle: "给用户展示的思考说明请用简体中文，简短、自然。",
@@ -159,12 +159,18 @@ export class ThinkSplitter {
       if (!this.inThink) {
         // 正文开头的空白先不急着发：后面可能紧跟 <think>
         if (!this.started && !this.buf.trim()) break;
+        // 正文已经开始后，标签只是模型正文里的字面文本，原样保留。
+        if (this.started) {
+          content += this.buf;
+          this.buf = "";
+          break;
+        }
         const i = this.buf.indexOf(OPEN);
         const j = this.buf.indexOf(CLOSE);
         if (j !== -1 && (i === -1 || j < i)) {
-          // 没有开头只有结尾的 </think>（有些网关会吞掉开头那个）：开头之前没发过正文就当思考，否则只去掉标签
+          // 没有开头只有结尾的 </think>（有些网关会吞掉开头那个）：开头之前没发过正文就当思考
           const before = this.buf.slice(0, j);
-          if (!this.started) thought += before; else content += before;
+          thought += before;
           this.buf = this.buf.slice(j + CLOSE.length).replace(/^\s+/, "");
           this.sawThink = true;
           continue;

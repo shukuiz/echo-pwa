@@ -184,6 +184,10 @@ test("ThinkSplitter unit cases", () => {
   assert.deepEqual(run(["  ", "<think>a</think>", "b"]), ["b", "a"]);
   assert.deepEqual(run(["a<", "b"]), ["a<b", ""], "不是标签的 < 原样保留");
   assert.deepEqual(run(["想好了</think>回复"]), ["回复", "想好了"], "只有结尾标签：前面算思考");
+  assert.deepEqual(run(["先说", "不过这里有 <think>字面标签", "和后半句"]), ["先说不过这里有 <think>字面标签和后半句", ""], "正文开始后开头标签按普通文本保留");
+  assert.deepEqual(run(["先说", "这里有 </think>字面标签"]), ["先说这里有 </think>字面标签", ""], "正文开始后结束标签按普通文本保留");
+  assert.deepEqual(run(["先说 <", "thi", "nk>字面", "和 </", "thi", "nk>"]), ["先说 <think>字面和 </think>", ""], "正文开始后跨块标签按普通文本保留");
+  assert.deepEqual(run(["<thi", "nk>想", "想</thi", "nk>正文"]), ["正文", "想想"], "开头思考标签跨块仍正常拆分");
   assert.equal(stripThink("<think>x</think>\n正文"), "正文");
   assert.equal(planThinking(normThinking({ mode: "off" }), { provider: "openai" }).systemAppend, "");
 });

@@ -1,10 +1,17 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.11.0";
+export const APP_VERSION = "0.11.1";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.11.1", date: "2026-11-26", title: "回复像聊天一样分气泡 ✿",
+    items: [
+      { t: "分气泡", d: "echo 的短回复会按句拆成好几个气泡、一个接一个冒出来，像真人一条条发消息；小作文还是整段一个气泡。聊天页顶部「分气泡」开关可以随时关掉。需要更新 Echo 前端才会生效" },
+      { t: "修复思考框", d: "正文里出现 <think> 字样不再被误当成思考、把后半句切进思考框" },
+    ],
+  },
   {
     version: "0.11.0", date: "2026-11-25", title: "换窗，和不会断的回复 ✿",
     items: [

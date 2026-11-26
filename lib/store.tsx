@@ -74,6 +74,7 @@ export type Settings = {
   models: string[];
   quietThink: boolean;
   showStatusBar: boolean;
+  splitBubbles: boolean;
   mute: boolean;
   tools: Record<string, boolean>;
 };
@@ -109,6 +110,7 @@ const defaultState: State = {
     models: ["claude-sonnet-4-5", "gpt-4o", "deepseek-chat"],
     quietThink: true,
     showStatusBar: true,
+    splitBubbles: true,
     mute: false,
     tools: { translate: true, media: true, worldbook: true, miniapp: true, script: true },
   },
@@ -226,6 +228,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
           quietThink: cfg.quietThink ?? prev.settings.quietThink,
           showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
+          splitBubbles: prev.settings.splitBubbles,
           mute: cfg.mute ?? prev.settings.mute,
           tools: cfg.tools ?? prev.settings.tools,
         },
