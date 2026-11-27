@@ -81,10 +81,24 @@ export async function startGeneration(opts: {
   const controller = new AbortController();
   ac = controller;
   streamLen = 0;
-  const input = opts.history
-    .filter((m) => m.text || (m.images && m.images.length))
-    .slice(-20)
-    .map((m) => ({ role: m.role, text: m.text, ...(m.images && m.images.length ? { images: m.images } : {}) }));
+  const recent = opts.history
+    .filter((m) => m.text || m.files?.length || (m.images && m.images.length))
+    .slice(-20);
+  // 文件正文只拼给这一轮：历史里再带一遍会把上下文撑爆
+  let lastUser = -1;
+  for (let i = recent.length - 1; i >= 0; i--) if (recent[i].role === "user") { lastUser = i; break; }
+  const textOf = (m: Msg, i: number) => {
+    if (!m.files?.length) return m.text;
+    if (i !== lastUser) {
+      return [m.text, ...m.files.map((f) => `【附件：${f.name}（前面发过，内容略）】`)].filter(Boolean).join("\n");
+    }
+    return [m.text, ...m.files.filter((f) => f.text).map((f) => `【附件：${f.name}】\n${f.text}`)].filter(Boolean).join("\n\n");
+  };
+  const input = recent.map((m, i) => ({
+    role: m.role,
+    text: textOf(m, i),
+    ...(m.images && m.images.length ? { images: m.images } : {}),
+  }));
   const userId = [...opts.history].reverse().find((m) => m.role === "user")?.id;
   try {
     await api.chatStream(input, {

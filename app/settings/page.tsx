@@ -7,6 +7,7 @@ import { api, ECHO_AUTH_ENABLED } from "@/lib/api";
 import { DEFAULT_ACCENT, useBeauty } from "@/lib/beauty";
 import ChatConnectionSettings from "./ChatConnectionSettings";
 import ReplyTimeoutSettings from "./ReplyTimeoutSettings";
+import VoiceSettings from "./VoiceSettings";
 import { openUpdateNotes } from "@/components/UpdateNotes";
 import Link from "next/link";
 import { APP_VERSION } from "@/lib/version";
@@ -48,6 +49,10 @@ export default function SettingsPage() {
         </Link>
 
         <ReplyTimeoutSettings />
+
+        <SettingsDrawer title="语音">
+          <VoiceSettings />
+        </SettingsDrawer>
 
         <SettingsDrawer title="动手入口">
           <div className="divide-y divide-line">

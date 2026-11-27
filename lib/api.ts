@@ -30,8 +30,17 @@ export type CodexStatus = {
 };
 export type ManualFile = { content: string; defaultContent?: string; savedAt?: number };
 
+// ---------- 语音（MiniMax，后端 backend/src/voice.js） ----------
+export type VoiceSettings = {
+  enabled: boolean; baseUrl: string; groupId: string;
+  ttsModel: string; asrModel: string; voiceId: string; speed: number;
+  hasKey: boolean; keyMask: string;
+  presets: { id: string; name: string }[];
+};
+
 export type EchoSettings = Omit<Settings, "apiKey"> & {
   codex?: CodexSettings;
+  voice?: VoiceSettings;
   thoughtTranslationReady?: boolean;
   officialModels?: Record<string, string>;
   officialThinking?: Record<string, ThinkingSettings>;
@@ -117,6 +126,21 @@ async function requestError(res: Response) {
   return err;
 }
 
+/** 要二进制的接口（语音合成）：失败时后端回的是 JSON，这里把 message 抠出来 */
+async function blobFetch(path: string, opts: RequestInit = {}): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, opts);
+  } catch {
+    throw new ApiError("连不上 echo 后端", 0, "offline");
+  }
+  const type = res.headers.get("content-type") || "";
+  if (!res.ok || type.includes("application/json")) {
+    if (type.includes("application/json")) throw await requestError(res);
+    throw new ApiError(`请求失败 (${res.status})`, res.status);
+  }
+  return res.blob();
+}
 // ---------- 收藏本 ----------
 export type FavoriteMsg = { id: string; role: ApiRole; text: string; at: number };
 export type Favorite = { id: string; title: string; note: string; source: string; messages: FavoriteMsg[]; createdAt: number };
@@ -276,6 +300,21 @@ export const api = {
   codexResetThread: () => jsonFetch<{ ok: true }>("/api/codex/thread/reset", { method: "POST", body: "{}" }),
   codexLogin: () => jsonFetch<{ loggedIn: boolean } & Partial<CodexLogin>>("/api/codex/login", { method: "POST" }),
   codexCancelLogin: () => jsonFetch<{ ok: true }>("/api/codex/login/cancel", { method: "POST" }),
+
+  // 语音（MiniMax）：合成回 mp3，识别收 wav 二进制
+  getVoice: () => jsonFetch<VoiceSettings>("/api/voice/status", { cache: "no-store" }),
+  saveVoice: (voice: Record<string, unknown>) => jsonFetch<EchoSettings>("/api/settings", { method: "PUT", body: JSON.stringify({ voice }) }),
+  speak: (text: string) => blobFetch("/api/voice/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
+  speakTest: () => blobFetch("/api/voice/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
+  transcribe: (audio: Blob) => jsonFetch<{ text: string; duration: number }>("/api/voice/asr", {
+    method: "POST", headers: { "Content-Type": audio.type || "audio/wav" }, body: audio,
+  }),
+
+  // 附件：把文件抽成文字（PDF / Word / 文本）
+  extractFile: (name: string, mime: string, data: string) =>
+    jsonFetch<{ name: string; chars: number; truncated: boolean; text: string }>("/api/attach/extract", {
+      method: "POST", body: JSON.stringify({ name, mime, data }),
+    }),
 
   // 说明书（echo 的 AGENTS.md）
   getManual: () => jsonFetch<ManualFile>("/api/manual", { cache: "no-store" }),

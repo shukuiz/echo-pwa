@@ -1,10 +1,19 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.11.2";
+export const APP_VERSION = "0.12.0";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.12.0", date: "2026-11-27", title: "会说话了，也收得下文件 ✿",
+    items: [
+      { t: "语音", d: "设置 → 语音 里填 MiniMax 的 API Key 和 GroupId，挑个音色、还能调语速，点「试听」当场听。之后每条回复下面有个小喇叭，点一下念给你听、再点一下停；输入框的麦克风按住说话，松手自动转成文字填进输入框，说完还能改。合成的语音不存服务器，播完就没了" },
+      { t: "收文件", d: "「附件」里多了「文件」：PDF、Word(.docx)、txt / md / csv / json 这些都能发，后端把字抽出来一起交给 echo 读，最多 20 万字。文件不存服务器，读完就丢。扫描版 PDF 没有文字层，暂时读不了；老版 .doc 请另存成 .docx" },
+      { t: "存成文件", d: "长按任意一条消息，菜单里多了「存成文件」，直接把这段内容存成 .md 下载到手机/电脑" },
+      { t: "API 模式也能看图了", d: "以前收图只在 Codex 模式生效，现在普通接口只要模型本身能看（gpt-4o、gemini、qwen-vl 这类）也能发图；模型不支持时会直接告诉你换一个，不用自己猜" },
+    ],
+  },
   {
     version: "0.11.2", date: "2026-11-26", title: "能发图了，还能让 echo 看图 ✿",
     items: [

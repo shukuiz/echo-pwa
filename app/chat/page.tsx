@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/Chrome";
 import {
   IconCode, IconHand, IconMusic, IconRetry, IconSend, IconStar, IconStop, IconWand,
-  IconClip, IconMic, IconChevron, IconClock, IconSpark, IconTool, IconImage, IconCheck,
+  IconClip, IconMic, IconChevron, IconClock, IconSpark, IconTool, IconImage, IconCheck, IconFolder,
 } from "@/components/Icons";
 import { Card, Msg, uid, useStore } from "@/lib/store";
 import { fileKindLabel, Think } from "@/lib/mock";
@@ -15,6 +15,7 @@ import { refreshLive, resumeGenerations, startGeneration, stopGeneration, useLiv
 import { addFavorite } from "@/lib/favorites";
 import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
+import { playBlob, startRecording, stopPlaying, type Recorder } from "@/lib/wav";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
 type Menu = { id: string; mine: boolean; rect: { top: number; left: number; width: number; height: number }; text: string; cls: string };
@@ -48,6 +49,23 @@ function compressImage(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+/** 喇叭图标（图标库里没有，内联一个） */
+function IconSpeaker({ size = 15, className = "" }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9}
+      strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M4 9.5v5h3l4.5 3.5v-12L7 9.5H4z" /><path d="M16 8.5a5 5 0 0 1 0 7" />
+    </svg>
+  );
+}
+
+const fileToBase64 = (f: File) => new Promise<string>((resolve, reject) => {
+  const r = new FileReader();
+  r.onerror = () => reject(new Error("read"));
+  r.onload = () => resolve(String(r.result || ""));
+  r.readAsDataURL(f);
+});
+
 type Work = {
   hand: string;
   branch: string;
@@ -107,6 +125,15 @@ function Chat() {
   const [modelMenu, setModelMenu] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const imgInputRef = useRef<HTMLInputElement>(null);
+  // 文件：只留文件名和抽出来的文字，原文不落盘
+  const [pendingFiles, setPendingFiles] = useState<{ name: string; chars: number; text: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachMenu, setAttachMenu] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recLevel, setRecLevel] = useState(0);
+  const recRef = useRef<Recorder | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [speaking, setSpeaking] = useState<string | null>(null);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const [winTitle, setWinTitle] = useState("");
@@ -196,21 +223,27 @@ function Chat() {
     void startGeneration({ set: (fn) => set("messages", fn), history, echoId: errId, regenerate, model: settings.model });
   }
 
-  function sendText(raw: string, imgs: string[] = []) {
+  function sendText(raw: string, imgs: string[] = [], files: { name: string; chars: number; text: string }[] = []) {
     const text = raw.trim();
-    if ((!text && imgs.length === 0) || live) return;
+    if ((!text && imgs.length === 0 && files.length === 0) || live) return;
     followLatest.current = true;
-    const userMsg: Msg = { id: uid(), role: "user", text, status: "done", at: Date.now(), ...(imgs.length ? { images: imgs } : {}) };
+    const userMsg: Msg = {
+      id: uid(), role: "user", text, status: "done", at: Date.now(),
+      ...(imgs.length ? { images: imgs } : {}),
+      ...(files.length ? { files } : {}),
+    };
     set("messages", (ms) => [...ms, userMsg]);
     doChat([...messagesRef.current, userMsg]);
   }
 
   function send() {
-    if ((!input.trim() && pendingImages.length === 0) || busy || confirm) return;
+    if ((!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || busy || confirm) return;
     const imgs = pendingImages;
-    sendText(input, imgs);
+    const files = pendingFiles;
+    sendText(input, imgs, files);
     setInput("");
     setPendingImages([]);
+    setPendingFiles([]);
     setModelMenu(false);
   }
 
@@ -227,6 +260,88 @@ function Chat() {
       try { out.push(await compressImage(f)); } catch {}
     }
     if (out.length) setPendingImages((prev) => [...prev, ...out].slice(0, 4));
+  }
+
+  async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    setAttachMenu(false);
+    if (!files.length) return;
+    const room = 3 - pendingFiles.length;
+    if (room <= 0) { toast("最多 3 个文件"); return; }
+    if (files.length > room) toast("最多 3 个文件");
+    for (const f of files.slice(0, room)) {
+      if (f.size > 3 * 1024 * 1024) { toast(`${f.name} 超过 3MB，读不动`); continue; }
+      try {
+        const data = await fileToBase64(f);
+        const out = await api.extractFile(f.name, f.type, data);
+        setPendingFiles((p) => [...p, { name: out.name, chars: out.chars, text: out.text }].slice(0, 3));
+        if (out.truncated) toast(`${f.name} 太长，只读了前 20 万字`);
+      } catch (err) {
+        toast((err as Error).message || `${f.name} 读不了`);
+      }
+    }
+  }
+
+  /** 按住说话：松手识别，文字进输入框（不直接发，留给你改） */
+  async function beginRecord() {
+    if (recording || busy) return;
+    try {
+      recRef.current = await startRecording(setRecLevel);
+      setRecording(true);
+      navigator.vibrate?.(6);
+    } catch {
+      toast("没拿到麦克风权限，去浏览器设置里开一下");
+    }
+  }
+
+  async function endRecord(cancel = false) {
+    const rec = recRef.current;
+    recRef.current = null;
+    setRecording(false);
+    setRecLevel(0);
+    if (!rec) return;
+    if (cancel) { rec.cancel(); return; }
+    const wav = rec.stop();
+    if (!wav) { toast("太短了，再说一次？"); return; }
+    setTranscribing(true);
+    try {
+      const r = await api.transcribe(wav);
+      setInput((v) => (v ? `${v} ${r.text}` : r.text));
+    } catch (e) {
+      toast((e as Error).message || "没听清");
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  /** 朗读一条回复：再点一次停 */
+  async function speak(m: Msg) {
+    if (!m.text) return;
+    if (speaking === m.id) { stopPlaying(); setSpeaking(null); return; }
+    setSpeaking(m.id);
+    try {
+      await playBlob(await api.speak(m.text));
+    } catch (e) {
+      toast((e as Error).message || "朗读失败");
+    } finally {
+      setSpeaking(null);
+    }
+  }
+
+  /** 把这条消息存成 .md 文件（浏览器直接下载，不经过服务器） */
+  function saveAsFile(id: string) {
+    const m = messages.find((x) => x.id === id);
+    setMenu(null);
+    if (!m?.text) return;
+    const blob = new Blob([m.text], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `echo-${new Date().toISOString().slice(0, 10)}-${id.slice(-4)}.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("存成文件了");
   }
 
   function stop() {
@@ -445,8 +560,22 @@ function Chat() {
 
         <div className="g cbar px-3 pb-2.5 pt-2" data-cssg data-tint="0.08" style={{ "--r": "28px" } as React.CSSProperties}>
           <input ref={imgInputRef} type="file" accept="image/*" multiple onChange={onPickImages} className="hidden" />
-          {pendingImages.length > 0 && (
-            <div className="mb-1.5 flex flex-wrap gap-1.5 px-1">
+          <input ref={fileInputRef} type="file" multiple onChange={onPickFiles}
+            accept=".txt,.md,.markdown,.pdf,.docx,.csv,.json,.log,.yml,.yaml,.html,.htm,.xml,.srt,.vtt" className="hidden" />
+          {recording && (
+            <div className="mb-1.5 flex items-center gap-2 rounded-2xl bg-sakura/30 px-3 py-2 text-[13px] text-rose">
+              <span className="h-2 w-2 animate-blink rounded-full bg-rose" />
+              正在听…松手结束
+              <span className="ml-auto flex h-4 items-end gap-[2px]">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <span key={i} className="w-[3px] rounded-full bg-rose transition-all"
+                    style={{ height: `${4 + recLevel * 14 * (i % 2 ? 0.7 : 1)}px` }} />
+                ))}
+              </span>
+            </div>
+          )}
+          {(pendingImages.length > 0 || pendingFiles.length > 0) && (
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
               {pendingImages.map((src, i) => (
                 <div key={i} className="relative">
                   <img src={src} alt="" className="h-16 w-16 rounded-xl object-cover" />
@@ -456,6 +585,15 @@ function Chat() {
                     onClick={() => setPendingImages((p) => p.filter((_, j) => j !== i))}
                     className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-ink text-cream text-[12px]"
                   >×</button>
+                </div>
+              ))}
+              {pendingFiles.map((f, i) => (
+                <div key={`f${i}`} className="flex max-w-[62%] items-center gap-1 rounded-xl bg-tile px-2 py-1.5 text-[12px]">
+                  <IconFolder size={13} className="shrink-0 text-mute" />
+                  <span className="truncate">{f.name}</span>
+                  <span className="shrink-0 text-mute">{f.chars > 1000 ? `${Math.round(f.chars / 1000)}k字` : `${f.chars}字`}</span>
+                  <button type="button" aria-label="移除这个文件" onClick={() => setPendingFiles((p) => p.filter((_, j) => j !== i))}
+                    className="shrink-0 px-0.5 text-mute">×</button>
                 </div>
               ))}
             </div>
@@ -468,15 +606,40 @@ function Chat() {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
             }}
             rows={1}
-            placeholder={confirm ? "请先在上方确认…" : "跟 echo 说点什么…"}
+            placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : "跟 echo 说点什么…"}
             className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
-            <button aria-label="附件" onClick={() => imgInputRef.current?.click()} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
-              <IconClip size={18} />
-            </button>
-            <button aria-label="语音" onClick={() => toast("语音先占位")} className="chip press grid h-9 w-9 shrink-0 place-items-center rounded-full">
-              <IconMic size={18} />
+            <div className="relative shrink-0">
+              <button aria-label="附件" onClick={() => setAttachMenu((v) => !v)} className="chip press grid h-9 w-9 place-items-center rounded-full">
+                <IconClip size={18} />
+              </button>
+              {attachMenu && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setAttachMenu(false)} />
+                  <div className="absolute bottom-full left-0 z-30 mb-2 w-[176px] animate-pop overflow-hidden rounded-[18px] bg-tile p-1 shadow-soft">
+                    <button type="button" onClick={() => { setAttachMenu(false); imgInputRef.current?.click(); }}
+                      className="press flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left text-[14px]">
+                      <IconImage size={16} /> 图片
+                    </button>
+                    <button type="button" onClick={() => { setAttachMenu(false); fileInputRef.current?.click(); }}
+                      className="press flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left text-[14px]">
+                      <IconFolder size={16} /> 文件（PDF / Word / 文本）
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+            <button
+              aria-label="按住说话"
+              onPointerDown={(e) => { e.preventDefault(); void beginRecord(); }}
+              onPointerUp={() => void endRecord()}
+              onPointerCancel={() => void endRecord(true)}
+              onContextMenu={(e) => e.preventDefault()}
+              disabled={transcribing || busy}
+              className={`chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : ""} disabled:opacity-50`}
+            >
+              {transcribing ? <span className="text-[11px]">听…</span> : <IconMic size={18} />}
             </button>
             <button
               onClick={() => setModelMenu((v) => !v)}
@@ -490,7 +653,7 @@ function Chat() {
                 <IconStop size={18} />
               </button>
             ) : (
-              <button aria-label="发送" onClick={send} disabled={(!input.trim() && pendingImages.length === 0) || !!confirm} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-[color:var(--accent-ink)] disabled:bg-orb/45">
+              <button aria-label="发送" onClick={send} disabled={(!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || !!confirm} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-[color:var(--accent-ink)] disabled:bg-orb/45">
                 <IconSend size={18} />
               </button>
             )}
@@ -579,7 +742,7 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} />
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} />
           </div>
         ))}
         {working && (
@@ -646,7 +809,8 @@ function Chat() {
           ["brain", "记住", () => remember([menu.id])],
           ["heart", "收藏", () => favorite([menu.id])],
           ["select", "多选", () => startSelect(menu.id)],
-          ["down", "从这句以后", () => startSelect(menu.id, "after")],
+          ["chev", "从这句以后", () => startSelect(menu.id, "after")],
+          ["download", "存成文件", () => saveAsFile(menu.id)],
           ...(regen ? [["retry", "重新生成本轮", regenerate] as [string, string, () => void]] : []),
           ["trash", "删除", () => { setMenu(null); setAskDel([menu.id]); }, "danger"],
         ];
@@ -782,7 +946,7 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean }) {
+function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy, onSpeak, speaking }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!(m.images && m.images.length);
@@ -830,6 +994,17 @@ function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy }: 
             ))}
           </div>
         )}
+        {!!m.files?.length && (
+          <div className={`mb-1.5 flex flex-wrap gap-1.5 ${mine ? "justify-end" : ""}`}>
+            {m.files.map((f, i) => (
+              <span key={i} className="flex max-w-[240px] items-center gap-1.5 rounded-xl bg-tile px-2.5 py-1.5 text-[12px] text-mute">
+                <IconFolder size={13} className="shrink-0" />
+                <span className="truncate text-ink">{f.name}</span>
+                <span className="shrink-0">{f.chars > 1000 ? `${Math.round(f.chars / 1000)}k字` : `${f.chars}字`}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div className={multi ? `flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}>
           {parts.map((p, i) => (
             <div
@@ -850,7 +1025,17 @@ function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy }: 
         {m.card && m.status === "done" && <ResultCard card={m.card} />}
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
-        {m.status !== "streaming" && <p className={`mt-1 px-2 text-[11px] opacity-80 ${mine ? "text-right" : ""}`} data-onwp>{fmtTime(m.at)}</p>}
+        {m.status !== "streaming" && (
+          <p className={`mt-1 flex items-center gap-2 px-2 text-[11px] opacity-80 ${mine ? "justify-end" : ""}`} data-onwp>
+            <span>{fmtTime(m.at)}</span>
+            {!mine && m.text && (
+              <button type="button" aria-label={speaking === m.id ? "停止朗读" : "朗读这条"} onClick={() => onSpeak(m)} className="press flex items-center gap-1">
+                <IconSpeaker size={13} className={speaking === m.id ? "text-rose" : ""} />
+                {speaking === m.id && <span className="text-rose">朗读中</span>}
+              </button>
+            )}
+          </p>
+        )}
       </div>
     </div>
     {m.status === "error" && <div className="mt-1.5"><ErrorCard m={m} onAction={onAction} busy={busy} /></div>}
