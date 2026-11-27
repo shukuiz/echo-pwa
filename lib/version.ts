@@ -1,10 +1,19 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.12.0";
+export const APP_VERSION = "0.12.1";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.12.1", date: "2026-11-27", title: "英文的思考，也能看懂了 ✿",
+    items: [
+      { t: "思考翻译", d: "模型用英文想事情的时候，展开「思考过程」会自动翻成中文，下面留一个「看原文」可以切回去。用的是免费翻译接口，不花 token、不消耗你的 api 额度" },
+      { t: "只在你要看时才翻", d: "不展开就不翻译，展开了才发一次请求；同一段思考翻过就记住，反复展开不会重复请求" },
+      { t: "翻不出来也不打扰", d: "接口偶尔会被限流或者连不上，这时就照旧显示英文原文，不会弹错、不影响回复本身" },
+      { t: "开关", d: "设置 → 思考翻译，可以整个关掉" },
+    ],
+  },
   {
     version: "0.12.0", date: "2026-11-27", title: "会说话了，也收得下文件 ✿",
     items: [

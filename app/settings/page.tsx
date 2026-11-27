@@ -105,6 +105,20 @@ export default function SettingsPage() {
           </Link>
         </SettingsDrawer>
 
+        <SettingsDrawer title="思考翻译">
+          <div className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[15px]">展开思考框时翻成中文</p>
+                <p className="mt-1 text-[12.5px] leading-relaxed text-mute">
+                  模型用英文思考时，展开那一下自动翻成中文，用的是免费翻译接口，不花 token。不展开就不翻；翻不出来就照旧显示原文。
+                </p>
+              </div>
+              <Toggle label="思考翻译" on={settings.thinkTranslate !== false} onChange={(v) => set("settings", (s) => ({ ...s, thinkTranslate: v }))} />
+            </div>
+          </div>
+        </SettingsDrawer>
+
         <SettingsDrawer title="外观">
           <div className="space-y-3">
             <div>

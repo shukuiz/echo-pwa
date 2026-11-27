@@ -79,6 +79,8 @@ export type Settings = {
   quietThink: boolean;
   showStatusBar: boolean;
   splitBubbles: boolean;
+  /** 展开思考框时自动把英文思考翻成中文（免费接口，失败就显示原文） */
+  thinkTranslate: boolean;
   mute: boolean;
   tools: Record<string, boolean>;
 };
@@ -115,6 +117,7 @@ const defaultState: State = {
     quietThink: true,
     showStatusBar: true,
     splitBubbles: true,
+    thinkTranslate: true,
     mute: false,
     tools: { translate: true, media: true, worldbook: true, miniapp: true, script: true },
   },

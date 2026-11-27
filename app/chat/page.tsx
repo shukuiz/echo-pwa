@@ -742,7 +742,7 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} />
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} />
           </div>
         ))}
         {working && (
@@ -856,12 +856,28 @@ function Avatar() {
   );
 }
 
-function ThinkLine({ think, defaultOpen = false, live = false }: { think: Think; defaultOpen?: boolean; live?: boolean }) {
+function ThinkLine({ think, defaultOpen = false, live = false, translate = true }: { think: Think; defaultOpen?: boolean; live?: boolean; translate?: boolean }) {
   const [expanded, setExpanded] = useState<boolean>();
   const open = expanded ?? defaultOpen;
   const box = useRef<HTMLParagraphElement>(null);
+  // 思考翻译：展开时才请求（不展开不花钱），翻完缓存在组件里；失败就保持原文
+  const [zh, setZh] = useState("");
+  const [orig, setOrig] = useState(false);
+  const [tr, setTr] = useState<"idle" | "loading" | "done" | "none">("idle");
+  const asked = useRef("");
   // 边想边写：展开时跟着滚到最新一行
   useEffect(() => { if (live && open && box.current) box.current.scrollTop = box.current.scrollHeight; }, [think.text, live, open]);
+  useEffect(() => {
+    if (!translate || !open || live || tr !== "idle") return;
+    const t = (think.text || "").trim();
+    if (!t || asked.current === t) return;
+    asked.current = t;
+    setTr("loading");
+    api.translateThought(t)
+      .then((r) => { if (r?.text) { setZh(r.text); setTr("done"); } else setTr("none"); })
+      .catch(() => setTr("none"));
+  }, [open, live, translate, think.text, tr]);
+  const showingZh = tr === "done" && !!zh && !orig;
   return (
     <div className="mb-1.5 pl-10">
       <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]" data-onwp>
@@ -876,7 +892,14 @@ function ThinkLine({ think, defaultOpen = false, live = false }: { think: Think;
         ))}
       </div>
       {open && (
-        <p ref={box} className={`thinkbox mt-1.5 max-w-full whitespace-pre-wrap break-words rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute ${live ? "max-h-40 overflow-y-auto" : ""}`}>{think.text}</p>
+        <div className="thinkbox mt-1.5 max-w-full rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute">
+          <p ref={box} className={`max-w-full whitespace-pre-wrap break-words ${live ? "max-h-40 overflow-y-auto" : ""}`}>{showingZh ? zh : think.text}</p>
+          {!live && (tr === "loading" || tr === "done") && (
+            <div className="mt-1 flex items-center gap-2 text-[11.5px] opacity-70" data-onwp>
+              {tr === "loading" ? <span>正在翻译…</span> : <button type="button" onClick={() => setOrig(!orig)} className="underline underline-offset-2">{orig ? "看译文" : "看原文"}</button>}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -946,13 +969,13 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, onMenu, onAction, busy, onSpeak, speaking }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null }) {
+function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, onAction, busy, onSpeak, speaking }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!(m.images && m.images.length);
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
-  const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} />
-    : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} />
+  const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} translate={translateThink} />
+    : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} translate={translateThink} />
     : !mine && latest && m.status === "done" && m.text
       ? <p className="mb-1 pl-10 text-[12px]" data-onwp>这条回复没有收到模型提供的思考内容</p> : null;
   // 只拆「echo 的、生成完成的、开关打开的、短回复」；流式/我方/小作文都保持单气泡

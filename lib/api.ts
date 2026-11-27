@@ -251,6 +251,8 @@ export const api = {
   chatGeneration: (genId: string) => jsonFetch<GenSnapshot>(`/api/chat/generations/${encodeURIComponent(genId)}`, { cache: "no-store" }),
   /** 「停止」：真正让后端取消这次生成 */
   chatStop: (genId: string) => jsonFetch<{ ok: true; stopped: boolean }>("/api/chat/stop", { method: "POST", body: JSON.stringify({ genId }) }),
+  /** 思考翻译（免费）：展开思考框时才调用；不需要翻 / 失败时 text 为空 */
+  translateThought: (text: string) => jsonFetch<{ text?: string; skipped?: string }>("/api/thought/translate", { method: "POST", body: JSON.stringify({ text }) }),
   /** 批量删除聊天记录（多选删除、重新生成前删旧回复） */
   deleteMessages: (ids: string[]) =>
     jsonFetch<{ ok: true; deleted: number }>("/api/chat/messages", { method: "DELETE", body: JSON.stringify({ ids }) }),
