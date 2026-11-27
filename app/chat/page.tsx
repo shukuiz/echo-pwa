@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import ChatCss from "@/components/chat/ChatCss";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/Chrome";
 import {
@@ -529,7 +530,7 @@ function Chat() {
     </div>
   );
   const composer = (
-      <div className="relative z-30 shrink-0 px-3">
+      <div className="ec-composer relative z-30 shrink-0 px-3">
       {/* 模型选择 */}
       {modelMenu && (
         <>
@@ -607,11 +608,11 @@ function Chat() {
             }}
             rows={1}
             placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : "跟 echo 说点什么…"}
-            className="block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
+            className="ec-input block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
             <div className="relative shrink-0">
-              <button aria-label="附件" onClick={() => setAttachMenu((v) => !v)} className="chip press grid h-9 w-9 place-items-center rounded-full">
+              <button aria-label="附件" onClick={() => setAttachMenu((v) => !v)} className="ec-btn chip press grid h-9 w-9 place-items-center rounded-full">
                 <IconClip size={18} />
               </button>
               {attachMenu && (
@@ -637,23 +638,23 @@ function Chat() {
               onPointerCancel={() => void endRecord(true)}
               onContextMenu={(e) => e.preventDefault()}
               disabled={transcribing || busy}
-              className={`chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : ""} disabled:opacity-50`}
+              className={`ec-btn chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : ""} disabled:opacity-50`}
             >
               {transcribing ? <span className="text-[11px]">听…</span> : <IconMic size={18} />}
             </button>
             <button
               onClick={() => setModelMenu((v) => !v)}
-              className="chip press flex h-9 min-w-0 flex-1 items-center justify-between gap-1 rounded-capsule px-3 font-mono text-[13px]"
+              className="ec-btn chip press flex h-9 min-w-0 flex-1 items-center justify-between gap-1 rounded-capsule px-3 font-mono text-[13px]"
             >
               <span className="truncate">{settings.model}</span>
               <IconChevron size={14} className={`shrink-0 transition ${modelMenu ? "" : "rotate-180"}`} />
             </button>
             {busy ? (
-              <button aria-label="停止生成" onClick={stop} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-cream">
+              <button aria-label="停止生成" onClick={stop} data-state="stop" className="ec-send press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-cream">
                 <IconStop size={18} />
               </button>
             ) : (
-              <button aria-label="发送" onClick={send} disabled={(!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || !!confirm} className="press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-[color:var(--accent-ink)] disabled:bg-orb/45">
+              <button aria-label="发送" data-state="send" onClick={send} disabled={(!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || !!confirm} className="ec-send press grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose text-[color:var(--accent-ink)] disabled:bg-orb/45">
                 <IconSend size={18} />
               </button>
             )}
@@ -665,10 +666,11 @@ function Chat() {
   return (
     <PageShell
       glass
+      page="chat"
       title={winTitle ? `echo · ${winTitle}` : "echo"}
       footer={selectBar || composer}
       right={
-        <Link href="/chat/window" className={`chip winbtn press ${busy ? "opacity-50" : ""}`} aria-label="换窗" aria-disabled={busy}
+        <Link href="/chat/window" className={`ec-nav-btn chip winbtn press ${busy ? "opacity-50" : ""}`} aria-label="换窗" aria-disabled={busy}
           onClick={(e) => { if (busy) { e.preventDefault(); toast("echo 还在回复，等这条说完再换窗"); } }}>
           <GIcon n="win" s={17} />换窗
         </Link>
@@ -702,6 +704,7 @@ function Chat() {
         </div>
       }
     >
+      <ChatCss />
       {confirm && (
         <div className="sticky top-0 z-20 -mx-1 mb-3 animate-pop">
           <div className="block-white flex items-center gap-3 rounded-[26px] p-3 pl-4">
@@ -732,10 +735,11 @@ function Chat() {
 
       <div className="space-y-1 pt-2">
         {messages.length === 0 && (
-          <p className="pt-20 text-center" data-onwp>和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
+          <p className="ec-empty pt-20 text-center" data-onwp>和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
         )}
         {messages.map((m) => (
-          <div key={m.id} id={"msg-" + m.id} className={`msgrow ${sel ? "selecting" : ""} ${sel?.includes(m.id) ? "picked" : ""}`}
+          <div key={m.id} id={"msg-" + m.id} data-who={m.role === "user" ? "me" : "ai"} data-status={m.status ?? "done"}
+            className={`msgrow ec-msg ${sel ? "selecting" : ""} ${sel?.includes(m.id) ? "picked" : ""}`}
             onClick={sel && selectable(m) ? () => toggle(m.id) : undefined}>
             {sel && selectable(m) && (
               <span className="selbox" role="checkbox" aria-checked={sel.includes(m.id)} aria-label={sel.includes(m.id) ? "取消勾选" : "勾选这条"}>
@@ -748,13 +752,15 @@ function Chat() {
         {working && (
           <div className="flex items-center gap-2 pt-2 animate-rise">
             <Avatar />
-            <div className="g bub flex items-center gap-2 rounded-[22px] rounded-bl-md px-4 py-2.5 text-[15px]" data-cssg>
-              <span className="flex gap-1">
-                {[0, 1, 2].map((i) => (
-                  <span key={i} className="h-1.5 w-1.5 animate-blink rounded-full bg-rose" style={{ animationDelay: `${i * 0.2}s` }} />
-                ))}
-              </span>
-              {working}
+            <div className="ec-bubbles">
+              <div className="g bub ec-bubble flex items-center gap-2 rounded-[22px] rounded-bl-md px-4 py-2.5 text-[15px]" data-cssg data-who="ai">
+                <span className="flex gap-1">
+                  {[0, 1, 2].map((i) => (
+                    <span key={i} className="h-1.5 w-1.5 animate-blink rounded-full bg-rose" style={{ animationDelay: `${i * 0.2}s` }} />
+                  ))}
+                </span>
+                {working}
+              </div>
             </div>
           </div>
         )}
@@ -850,7 +856,7 @@ function Chat() {
 
 function Avatar() {
   return (
-    <span className="grid h-8 w-8 shrink-0 place-items-center self-end rounded-full bg-sakura/40 text-rose">
+    <span className="ec-avatar grid h-8 w-8 shrink-0 place-items-center self-end rounded-full bg-sakura/40 text-rose">
       <IconStar size={16} />
     </span>
   );
@@ -879,7 +885,7 @@ function ThinkLine({ think, defaultOpen = false, live = false, translate = true 
   }, [open, live, translate, think.text, tr]);
   const showingZh = tr === "done" && !!zh && !orig;
   return (
-    <div className="mb-1.5 pl-10">
+    <div className="ec-think mb-1.5 pl-10">
       <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]" data-onwp>
         <button aria-expanded={open} onClick={() => setExpanded(!open)} className="flex min-h-11 items-center gap-1">
           <IconClock size={14} /> {live ? <>正在思考<span className="animate-blink">…</span></> : "思考过程"} <IconChevron size={13} className={`transition ${open ? "" : "-rotate-90"}`} />
@@ -953,7 +959,7 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   return (
     <div className="flex items-end gap-2 animate-rise">
       {!m.text && <Avatar />}
-      <div className={`g reply-err ${m.text ? "ml-10" : ""}`} data-cssg data-tint="0.12" role="alert">
+      <div className={`g ec-error reply-err ${m.text ? "ml-10" : ""}`} data-cssg data-tint="0.12" role="alert">
         <p className="t">{m.text ? "这条没写完 (；´д｀)" : "回复失败了 (；´д｀)"}</p>
         {m.errorMessage && <p className="d">{m.errorMessage}</p>}
         {m.text && <p className="d mute">已经写出的字都留着</p>}
@@ -981,7 +987,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
   // 只拆「echo 的、生成完成的、开关打开的、短回复」；流式/我方/小作文都保持单气泡
   const parts = m.text ? (!mine && split && m.status === "done" ? splitTextIntoBubbles(m.text) : [m.text]) : [];
   const multi = parts.length > 1;
-  const bubbleClass = (p: string) => `g bub inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
+  const bubbleClass = `g bub ec-bubble inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
     mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
   }${multi ? " animate-rise" : ""}`;
   const bubbleStyle = (i: number) => multi ? { animationDelay: `${i * 0.28}s`, animationFillMode: "both" as const } : undefined;
@@ -1012,7 +1018,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
           <div className={`mb-1.5 flex flex-wrap gap-1.5 ${mine ? "justify-end" : ""}`}>
             {m.images!.map((src, i) => (
               <button key={i} type="button" onClick={() => setZoom(src)} className="press overflow-hidden rounded-xl">
-                <img src={src} alt="" className="h-24 w-24 object-cover" />
+                <img src={src} alt="" className="ec-image h-24 w-24 object-cover" />
               </button>
             ))}
           </div>
@@ -1020,7 +1026,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
         {!!m.files?.length && (
           <div className={`mb-1.5 flex flex-wrap gap-1.5 ${mine ? "justify-end" : ""}`}>
             {m.files.map((f, i) => (
-              <span key={i} className="flex max-w-[240px] items-center gap-1.5 rounded-xl bg-tile px-2.5 py-1.5 text-[12px] text-mute">
+              <span key={i} className="ec-file flex max-w-[240px] items-center gap-1.5 rounded-xl bg-tile px-2.5 py-1.5 text-[12px] text-mute">
                 <IconFolder size={13} className="shrink-0" />
                 <span className="truncate text-ink">{f.name}</span>
                 <span className="shrink-0">{f.chars > 1000 ? `${Math.round(f.chars / 1000)}k字` : `${f.chars}字`}</span>
@@ -1028,15 +1034,16 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
             ))}
           </div>
         )}
-        <div className={multi ? `flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}>
+        <div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
           {parts.map((p, i) => (
             <div
               key={i}
               {...(i === 0 ? press : {})}
               data-cssg
+              data-who={mine ? "me" : "ai"}
               data-hue={mine ? "me" : undefined}
               data-tint={mine ? "0.22" : undefined}
-              className={bubbleClass(p)}
+              className={bubbleClass}
               style={bubbleStyle(i)}
             >
               {p}
@@ -1049,7 +1056,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
         {m.status !== "streaming" && (
-          <p className={`mt-1 flex items-center gap-2 px-2 text-[11px] opacity-80 ${mine ? "justify-end" : ""}`} data-onwp>
+          <p className={`ec-time mt-1 flex items-center gap-2 px-2 text-[11px] opacity-80 ${mine ? "justify-end" : ""}`} data-onwp>
             <span>{fmtTime(m.at)}</span>
             {!mine && m.text && (
               <button type="button" aria-label={speaking === m.id ? "停止朗读" : "朗读这条"} onClick={() => onSpeak(m)} className="press flex items-center gap-1">

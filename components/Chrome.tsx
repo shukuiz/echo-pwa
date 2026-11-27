@@ -65,6 +65,7 @@ export function PageShell({
   children,
   footer,
   glass,
+  page,
 }: {
   title: string;
   sub?: React.ReactNode;
@@ -73,10 +74,11 @@ export function PageShell({
   footer?: React.ReactNode;
   /** 有壁纸 + 玻璃标题栏（聊天页）；样式跟「美化」走 */
   glass?: boolean;
+  page?: "chat";
 }) {
   const router = useRouter();
   const back = () => (window.history.length > 1 ? router.back() : router.push("/"));
-  if (glass) return <GlassShell title={title} sub={sub} right={right} footer={footer} onBack={back}>{children}</GlassShell>;
+  if (glass) return <GlassShell page={page} title={title} sub={sub} right={right} footer={footer} onBack={back}>{children}</GlassShell>;
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-fog">
       {/* 刘海 / 灵动岛：主屏幕 App 用 black-translucent 状态栏，内容会顶到最上面，所以标题栏自己让出安全区 */}
@@ -105,7 +107,8 @@ export function PageShell({
 }
 
 /** 玻璃版外壳：壁纸背景、状态栏字色跟着壁纸、标题栏是 CSS 玻璃（内容滚过去会被模糊） */
-function GlassShell({ title, sub, right, footer, onBack, children }: {
+function GlassShell({ title, sub, right, footer, onBack, children, page }: {
+  page?: "chat";
   title: string; sub?: React.ReactNode; right?: React.ReactNode; footer?: React.ReactNode; onBack: () => void; children: React.ReactNode;
 }) {
   const { settings } = useStore();
@@ -143,8 +146,8 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
     return () => clearInterval(t);
   }, []);
   return (
-    <WallScreen gl={false} fixed className="chat-shell mx-auto flex w-full max-w-[430px] flex-col">
-      <div className="gstick relative z-30 shrink-0 pt-[env(safe-area-inset-top)]">
+    <WallScreen gl={false} fixed page={page} className={`chat-shell mx-auto flex w-full max-w-[430px] flex-col${page ? " ec-page" : ""}`}>
+      <div className={`gstick relative z-30 shrink-0 pt-[env(safe-area-inset-top)]${page ? " ec-nav" : ""}`}>
         {settings.showStatusBar !== false && (
           <div className="fake-sb flex h-11 items-center justify-between px-7 text-[15px] font-semibold" data-onwp aria-hidden>
             <span className="tabular-nums">{time}</span>
@@ -152,15 +155,15 @@ function GlassShell({ title, sub, right, footer, onBack, children }: {
           </div>
         )}
         <div className="g cbar wbar" data-cssg data-tint="0.08">
-          <button className="back" aria-label="返回" onClick={onBack}><IconBack size={20} /></button>
+          <button className={page ? "back ec-nav-btn" : "back"} aria-label="返回" onClick={onBack}><IconBack size={20} /></button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[17px] font-semibold leading-tight">{title}</h1>
+            <h1 className={`truncate text-[17px] font-semibold leading-tight${page ? " ec-nav-title" : ""}`}>{title}</h1>
             {sub}
           </div>
           {right}
         </div>
       </div>
-      <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-3">{children}</main>
+      <main className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-3${page ? " ec-list" : ""}`}>{children}</main>
       {footer}
       <HomeIndicator inline />
     </WallScreen>

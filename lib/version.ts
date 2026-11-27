@@ -1,10 +1,20 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-export const APP_VERSION = "0.12.1";
+import { release } from "./release";
+
+export const APP_VERSION = "0.13.0";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: APP_VERSION, date: "2026-11-27", title: release.title,
+    items: [
+      { t: "聊天美化", d: release.changes[0] },
+      { t: "本机预设", d: release.changes[1] },
+      { t: "随时恢复", d: release.changes[2] + " 聊天美化无需后端接通。" },
+    ],
+  },
   {
     version: "0.12.1", date: "2026-11-27", title: "英文的思考，也能看懂了 ✿",
     items: [

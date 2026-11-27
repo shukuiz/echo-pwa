@@ -4,13 +4,13 @@ import { forwardRef, useImperativeHandle, useRef } from "react";
 import { useWall } from "./hooks";
 
 /** 有壁纸的页面外壳：.bty 作用域里的样式（玻璃、字色）才会生效 */
-export const WallScreen = forwardRef<HTMLDivElement, { gl: boolean; fixed?: boolean; className?: string; children: React.ReactNode }>(
-  function WallScreen({ gl, fixed, className = "", children }, fwd) {
+export const WallScreen = forwardRef<HTMLDivElement, { gl: boolean; fixed?: boolean; className?: string; page?: "chat"; children: React.ReactNode }>(
+  function WallScreen({ gl, fixed, className = "", page, children }, fwd) {
     const ref = useRef<HTMLDivElement>(null);
     useImperativeHandle(fwd, () => ref.current as HTMLDivElement);
     useWall(ref, gl);
     // fixed：定位交给 className 自己的 CSS（.home / .bpage 是 position:fixed）
-    return <div ref={ref} className={`bty ${className}`} style={fixed ? { zIndex: 1 } : { position: "relative", zIndex: 1 }}>{children}</div>;
+    return <div ref={ref} data-echo-page={page} className={`bty ${className}`} style={fixed ? { zIndex: 1 } : { position: "relative", zIndex: 1 }}>{children}</div>;
   }
 );
 

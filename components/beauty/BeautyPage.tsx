@@ -3,6 +3,7 @@
 // 美化页：分组收纳（风格 / 颜色 / 玻璃参数 / 字体 / 壁纸 / 外观），顶部一条实时小预览，
 // 改哪一项，预览里对应的那一块会亮一下（一一对应）。改动是草稿，点右上角或底部「保存」才落盘。
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Beauty, DEFAULT_ACCENT, FCOLS, ICOLS, MES, PRESETS, SLIDERS, TINTS, useBeauty } from "@/lib/beauty";
 import { useStore } from "@/lib/store";
@@ -201,6 +202,7 @@ export default function BeautyPage() {
         <div className="pvwrap"><Preview b={b} hi={hi} /></div>
       </div>
       <div className="bscroll" data-gclip>
+        <Link className="g bc-entry" href="/beauty/chat-css" data-cssg>聊天美化 →</Link>
         <Group id="style" icon="layers" title="风格" open={open.has("style")} onToggle={toggle}
           summary={glass ? "液态玻璃" : `仿真 · ${b.mat === "frost" ? "磨砂" : "实色"}`}>
           <div className="opts">
