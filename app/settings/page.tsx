@@ -11,6 +11,7 @@ import VoiceSettings from "./VoiceSettings";
 import { openUpdateNotes } from "@/components/UpdateNotes";
 import Link from "next/link";
 import { APP_VERSION } from "@/lib/version";
+import { squareImage } from "@/lib/image";
 
 // 计划接入的 MCP 服务（与后端 /api/tools 一致），后期接入
 const MCP_SERVERS = [
@@ -119,6 +120,13 @@ export default function SettingsPage() {
           </div>
         </SettingsDrawer>
 
+        <SettingsDrawer title="头像">
+          <div className="grid grid-cols-2 gap-4 p-4">
+            <AvatarPicker label="我的头像" value={settings.avatarMe} onChange={(v) => set("settings", (s) => ({ ...s, avatarMe: v }))} />
+            <AvatarPicker label="echo 的头像" value={settings.avatarEcho} onChange={(v) => set("settings", (s) => ({ ...s, avatarEcho: v }))} />
+          </div>
+        </SettingsDrawer>
+
         <SettingsDrawer title="外观">
           <div className="space-y-3">
             <div>
@@ -161,6 +169,17 @@ export default function SettingsPage() {
       </div>
     </PageShell>
   );
+}
+
+function AvatarPicker({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return <div className="text-center">
+    <label className="block cursor-pointer">
+      {value ? <img src={value} alt={label} className="mx-auto h-20 w-20 rounded-full object-cover" /> : <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-sakura/30 text-[12px] text-mute">选图</div>}
+      <span className="mt-2 block text-[13px]">{label}</span>
+      <input type="file" accept="image/*" className="hidden" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; onChange(await squareImage(file, 256)); e.currentTarget.value = ""; }} />
+    </label>
+    {value && <button type="button" className="mt-1 text-[12px] text-mute underline" onClick={() => onChange("")}>清除</button>}
+  </div>;
 }
 
 function Row({ icon, title, sub, children }: { icon: React.ReactNode; title: string; sub: string; children: React.ReactNode }) {

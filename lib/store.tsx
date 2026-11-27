@@ -63,6 +63,8 @@ export type Reminder = {
 export type Hand = "codex" | "claude";
 export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string; model?: string; thinking?: ThinkingSettings };
 export type Settings = {
+  avatarMe: string;
+  avatarEcho: string;
   apiKey: string;
   apiMode: "official" | "custom" | "codex";
   provider: string;
@@ -82,6 +84,8 @@ export type Settings = {
   /** 展开思考框时自动把英文思考翻成中文（免费接口，失败就显示原文） */
   thinkTranslate: boolean;
   mute: boolean;
+  /** 让 echo 偶尔主动发语音（暗号 [[echo:voice]]） */
+  proactiveVoice: boolean;
   tools: Record<string, boolean>;
 };
 
@@ -101,6 +105,8 @@ const defaultState: State = {
   reminders: seedReminders,
   files: seedFiles,
   settings: {
+    avatarMe: "",
+    avatarEcho: "",
     apiKey: "",
     apiMode: "official",
     provider: "openai",
@@ -119,6 +125,7 @@ const defaultState: State = {
     splitBubbles: true,
     thinkTranslate: true,
     mute: false,
+    proactiveVoice: true,
     tools: { translate: true, media: true, worldbook: true, miniapp: true, script: true },
   },
 };
@@ -241,7 +248,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           codexEnabled: cfg.codexEnabled ?? prev.settings.codexEnabled,
           claudeEnabled: cfg.claudeEnabled ?? prev.settings.claudeEnabled,
           defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
-          quietThink: cfg.quietThink ?? prev.settings.quietThink,
+          quietThink: prev.settings.quietThink,
           showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
           splitBubbles: prev.settings.splitBubbles,
           mute: cfg.mute ?? prev.settings.mute,

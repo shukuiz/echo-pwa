@@ -142,6 +142,8 @@ async function blobFetch(path: string, opts: RequestInit = {}): Promise<Blob> {
   return res.blob();
 }
 // ---------- 收藏本 ----------
+export type EchoSkill = { id:string; name:string; desc:string; prompt:string; builtin:boolean; enabled:boolean; at:number };
+
 export type FavoriteMsg = { id: string; role: ApiRole; text: string; at: number };
 export type Favorite = { id: string; title: string; note: string; source: string; messages: FavoriteMsg[]; createdAt: number };
 
@@ -184,7 +186,7 @@ export async function chatStream(
     /** 重新生成本轮：用户消息已经在记录里，后端不再存一遍 */
     regenerate?: boolean;
     /** 这次生成的请求 ID：断开连接后端也不取消，回来按它接上；只更新带这个 ID 的消息 */
-    genId?: string;
+    genId?: string; skillIds?: string[];
   }
 ): Promise<void> {
   let res: Response;
@@ -192,7 +194,7 @@ export async function chatStream(
     res = await fetch(`${API_BASE}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined, genId: opts.genId }),
+      body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined, genId: opts.genId, skillIds: opts.skillIds }),
       signal: opts.signal,
     });
   } catch (e) {
@@ -265,6 +267,11 @@ export const api = {
   resumeCandidates: (q: string, kind = "") => jsonFetch<{ items: ResumeCandidate[]; total: number }>(`/api/windows/candidates?q=${encodeURIComponent(q)}&kind=${kind}`, { cache: "no-store" }),
   switchWindow: (body: { selection: ResumeSelection; skipShadow?: boolean; skipContinuity?: boolean }) =>
     jsonFetch<SwitchResult>("/api/windows/switch", { method: "POST", body: JSON.stringify(body) }),
+
+  // 技能库
+  getSkills: () => jsonFetch<{ skills: EchoSkill[] }>("/api/skills", { cache: "no-store" }),
+  saveSkill: (payload: Partial<EchoSkill>) => jsonFetch<EchoSkill>("/api/skills", { method: "POST", body: JSON.stringify(payload) }),
+  deleteSkill: (id: string) => jsonFetch(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // 收藏本
   getFavorites: () => jsonFetch<{ favorites: Favorite[] }>("/api/favorites", { cache: "no-store" }),
@@ -358,3 +365,9 @@ export const api = {
     jsonFetch("/api/files", { method: "POST", body: JSON.stringify(f) }),
   deleteFile: (id: string) => jsonFetch(`/api/files/${id}`, { method: "DELETE" }),
 };
+
+export type AlbumItem = { id:string; who:'mine'|'echo'; title?:string; at:number; size:number; source:string };
+export const albumList = (who:'mine'|'echo'|'all'='all') => jsonFetch<{items:AlbumItem[]}>(`/api/album/list?who=${who}`);
+export const albumSave = (v:{who:'mine'|'echo';dataUrl:string;title?:string;source?:string}) => jsonFetch<AlbumItem>('/api/album/save',{method:'POST',body:JSON.stringify(v)});
+export const albumDelete = (id:string) => jsonFetch(`/api/album/${encodeURIComponent(id)}`,{method:'DELETE'});
+export const albumFileUrl = (id:string) => `${API_BASE}/api/album/file/${encodeURIComponent(id)}`;

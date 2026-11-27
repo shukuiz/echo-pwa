@@ -6,6 +6,7 @@
 // - 「停止」走 POST /api/chat/stop，真正让后端停下
 import { useSyncExternalStore } from "react";
 import { api, ApiError, type GenSnapshot } from "./api";
+import { parseEchoActions, type EchoAction } from "./echo-actions";
 import { uid, type Msg } from "./store";
 
 type SetMessages = (fn: (ms: Msg[]) => Msg[]) => void;
@@ -32,8 +33,10 @@ function patchIf(echoId: string, genId: string, fn: (m: Msg) => Partial<Msg>) {
 }
 
 function applySnapshot(echoId: string, s: GenSnapshot) {
+  // 轮询/接续这条路也把暗号剥掉（动作只在流正常结束时触发，这里不重复执行）
+  const text = s.status === "streaming" ? s.text : parseEchoActions(s.text).text;
   patchIf(echoId, s.genId, () => ({
-    text: s.text, reasoning: s.reasoning || undefined, note: s.note || undefined, model: s.model || undefined,
+    text, reasoning: s.reasoning || undefined, note: s.note || undefined, model: s.model || undefined,
     status: s.status,
     ...(s.status === "error" ? { errorMessage: s.errorMessage, errorKind: s.errorKind, actions: s.actions } : { errorMessage: undefined, errorKind: undefined, actions: undefined }),
   }));
@@ -65,7 +68,9 @@ function poll(echoId: string, genId: string, misses = 0) {
 }
 
 export async function startGeneration(opts: {
-  set: SetMessages; history: Msg[]; echoId?: string; regenerate?: boolean; model?: string;
+  set: SetMessages; history: Msg[]; echoId?: string; regenerate?: boolean; model?: string; skillIds?: string[];
+  /** 回复里带了「小动作」暗号时回调：正文已经剥干净，动作交给页面去执行 */
+  onActions?: (actions: EchoAction[], ctx: { text: string }) => void;
 }) {
   setMsgs = opts.set;
   if (live) return;
@@ -102,7 +107,7 @@ export async function startGeneration(opts: {
   const userId = [...opts.history].reverse().find((m) => m.role === "user")?.id;
   try {
     await api.chatStream(input, {
-      model: opts.model, signal: controller.signal, genId, ids: { user: userId, echo: echoId }, regenerate: opts.regenerate,
+      model: opts.model, skillIds: opts.skillIds, signal: controller.signal, genId, ids: { user: userId, echo: echoId }, regenerate: opts.regenerate,
       onReasoning: (t) => patchIf(echoId, genId, (m) => ({ reasoning: (m.reasoning || "") + t })),
       onReasoningTranslated: (t) => patchIf(echoId, genId, () => ({ reasoning: t })),
       onNote: (t) => patchIf(echoId, genId, () => ({ note: t })),
@@ -110,7 +115,15 @@ export async function startGeneration(opts: {
     });
     const cur = liveGen();
     if (cur?.genId !== genId || cur.polling) return; // 已经改成轮询接手了
-    patchIf(echoId, genId, (m) => ({ status: m.status === "stopped" ? "stopped" : "done" }));
+    // 暗号只在写完这一下剥一次：流式过程中不会闪出来
+    let finalText: string | null = null;
+    setMsgs?.((ms) => ms.map((m) => {
+      if (m.id !== echoId || m.genId !== genId) return m;
+      const parsed = parseEchoActions(m.text);
+      finalText = parsed.text;
+      if (parsed.actions.length) opts.onActions?.(parsed.actions, { text: parsed.text });
+      return { ...m, text: parsed.text, status: m.status === "stopped" ? "stopped" : "done" };
+    }));
     setLive(null);
   } catch (e) {
     const cur = liveGen();

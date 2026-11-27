@@ -1,18 +1,49 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
-import { release } from "./release";
 
-export const APP_VERSION = "0.13.0";
+export const APP_VERSION = "0.13.4";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
   {
-    version: APP_VERSION, date: "2026-11-27", title: release.title,
+    version: "0.13.4", date: "2026-11-28", title: "它会自己动一动了 ✿",
     items: [
-      { t: "聊天美化", d: release.changes[0] },
-      { t: "本机预设", d: release.changes[1] },
-      { t: "随时恢复", d: release.changes[2] + " 聊天美化无需后端接通。" },
+      { t: "偶尔主动发语音", d: "聊到合适的地方，echo 会自己念一句给你听，不用你点小喇叭。设置 → 语音 里可以关掉" },
+      { t: "偶尔主动发文件", d: "它写好的东西可以自己塞进文件柜，聊天里会冒出一张小卡片，点开就能看" },
+      { t: "自己记下来", d: "遇到值得记住的事，echo 会主动记进记忆本，你这边会收到一句提醒" },
+      { t: "自己存相册", d: "它可以把自己觉得好的那段聊天截成图，存进自己的相册，也可以存进我的" },
+      { t: "截图更顺", d: "长按任意一条消息 → 「截成图片」，选这一条 / 最近 10 条 / 最近 30 条，预览完再决定存哪本相册；多选还能再存一份到手机" },
+    ],
+  },
+  {
+    version: "0.13.3", date: "2026-11-28", title: "相册、聊天截图和头像 ✿",
+    items: [
+      { t: "相册", d: "可以把聊天截成图片，存进我的相册或 echo 的相册。" },
+      { t: "头像", d: "设置里可以分别更换我的头像和 echo 的头像。" },
+    ],
+  },
+  {
+    version: "0.13.2", date: "2026-11-28", title: "技能库和不会失忆的新对话 ✿",
+    items: [
+      { t: "技能库", d: "工作台换成技能库，点一下就能把写作、翻译、找图、写小应用、总结聊天的套路带进这一条消息，也可以自己新建技能。" },
+      { t: "新对话不失忆", d: "Codex 开新对话时会自动带上 echo 里最近的聊天记录，接着聊就行。" },
+    ],
+  },
+  {
+    version: "0.13.1", date: "2026-11-28", title: "语音不用再填 GroupId ✿",
+    items: [
+      { t: "不用 GroupId", d: "新版 MiniMax Key 只填 API Key 就能合成，GroupId 变成可选" },
+      { t: "自定义音色", d: "设置 → 语音 多了一个「自定义音色 ID」，克隆出来的音色也能用" },
+      { t: "顶栏能收起", d: "聊天顶栏的两个开关收进「显示」小弹层，退出再进来还记着" },
+    ],
+  },
+  {
+    version: "0.13.0", date: "2026-11-27", title: "聊天也能自己写样式了 ✿",
+    items: [
+      { t: "聊天美化", d: "美化 → 聊天美化：粘贴一段 CSS，只改聊天页的样子，别的页面不受影响。" },
+      { t: "本机预设", d: "写好的样式可以存成预设，点一下切换；不存就直接覆盖当前。" },
+      { t: "随时恢复", d: "全部存在这台设备上，不上传；写坏了点「停用」立刻回来。" },
     ],
   },
   {

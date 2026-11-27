@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 import { Toggle } from "@/components/Chrome";
 import { api, type EchoSettings, type VoiceSettings as VoiceCfg } from "@/lib/api";
 import { playBlob, stopPlaying } from "@/lib/wav";
+import { useStore } from "@/lib/store";
 
 type Feedback = { kind: "working" | "success" | "error"; message: string };
 const errMsg = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
@@ -20,11 +21,13 @@ export default function VoiceSettings({ onChange }: { onChange?: (next: EchoSett
   const [baseUrl, setBaseUrl] = useState(BASES[0].value);
   const [groupId, setGroupId] = useState("");
   const [voiceId, setVoiceId] = useState("female-tianmei");
+  const [customVoice, setCustomVoice] = useState("");
   const [speed, setSpeed] = useState(1);
   const [key, setKey] = useState("");
   const [save, setSave] = useState<Feedback | null>(null);
   const [playing, setPlaying] = useState(false);
-  const ids = { key: useId(), group: useId(), voice: useId(), speed: useId() };
+  const { settings, set } = useStore();
+  const ids = { key: useId(), group: useId(), voice: useId(), customVoice: useId(), speed: useId() };
 
   useEffect(() => {
     api.getVoice()
@@ -34,6 +37,7 @@ export default function VoiceSettings({ onChange }: { onChange?: (next: EchoSett
         setBaseUrl(v.baseUrl || BASES[0].value);
         setGroupId(v.groupId || "");
         setVoiceId(v.voiceId || "female-tianmei");
+        setCustomVoice(v.presets?.some((p) => p.id === v.voiceId) ? "" : (v.voiceId || ""));
         setSpeed(v.speed || 1);
       })
       .catch((e) => setSave({ kind: "error", message: errMsg(e, "读不到语音设置") }));
@@ -41,7 +45,7 @@ export default function VoiceSettings({ onChange }: { onChange?: (next: EchoSett
 
   async function savePatch(extra: Record<string, unknown> = {}) {
     const next = await api.saveVoice({
-      enabled, baseUrl, groupId, voiceId, speed,
+      enabled, baseUrl, groupId, voiceId: customVoice.trim() || voiceId, speed,
       ...(key.trim() ? { apiKey: key.trim() } : {}),
       ...extra,
     });
@@ -103,12 +107,12 @@ export default function VoiceSettings({ onChange }: { onChange?: (next: EchoSett
       </label>
 
       <label htmlFor={ids.group} className="block space-y-1 text-[13px] text-mute">
-        <span className="block">GroupId</span>
+        <span className="block">GroupId（可选）</span>
         <input
           id={ids.group}
           value={groupId}
           onChange={(e) => { setGroupId(e.target.value); setSave(null); }}
-          placeholder="控制台「账户信息」里那串数字，合成要用"
+          placeholder="可选，新版 Key 不用填；老 Key 才需要（控制台「账户信息」里的数字）"
           className="field font-mono"
         />
       </label>
@@ -127,10 +131,15 @@ export default function VoiceSettings({ onChange }: { onChange?: (next: EchoSett
 
       <label htmlFor={ids.voice} className="block space-y-1 text-[13px] text-mute">
         <span className="block">音色</span>
-        <select id={ids.voice} value={voiceId} onChange={(e) => { setVoiceId(e.target.value); setSave(null); }} className="field">
+        <select id={ids.voice} value={customVoice ? "" : voiceId} onChange={(e) => { setVoiceId(e.target.value); setCustomVoice(""); setSave(null); }} className="field">
+          {customVoice && <option value="">使用自定义</option>}
           {presets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          {!presets.some((p) => p.id === voiceId) && <option value={voiceId}>{voiceId}</option>}
         </select>
+        <label htmlFor={ids.customVoice} className="block space-y-1 pt-2">
+          <span className="block">自定义音色 ID</span>
+          <input id={ids.customVoice} value={customVoice} onChange={(e) => { setCustomVoice(e.target.value); setSave(null); }} placeholder="例如 moss_audio_xxx" className="field font-mono" />
+        </label>
+        {customVoice.trim() && <p className="text-[12px] text-rose">已用自定义音色：{customVoice.trim()}</p>}
       </label>
 
       <label htmlFor={ids.speed} className="block space-y-1 text-[13px] text-mute">
@@ -138,6 +147,14 @@ export default function VoiceSettings({ onChange }: { onChange?: (next: EchoSett
         <input id={ids.speed} type="range" min={0.5} max={2} step={0.1} value={speed}
           onChange={(e) => { setSpeed(Number(e.target.value)); setSave(null); }} className="w-full accent-[color:var(--accent)]" />
       </label>
+
+      <div className="flex items-start justify-between gap-3 border-t border-line pt-3">
+        <div className="min-w-0">
+          <p className="text-[15px]">让 echo 偶尔主动发语音</p>
+          <p className="mt-1 text-[12px] text-mute">聊天里它觉得合适的时候，会自己念一句给你听</p>
+        </div>
+        <Toggle label="主动语音" on={settings.proactiveVoice !== false} onChange={(v) => set("settings", (s) => ({ ...s, proactiveVoice: v }))} />
+      </div>
 
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={submit} disabled={save?.kind === "working"} className="btn-primary min-h-11 px-4 disabled:opacity-50">
@@ -149,7 +166,7 @@ export default function VoiceSettings({ onChange }: { onChange?: (next: EchoSett
         <p role="status" className={`text-[13px] ${save.kind === "error" ? "font-medium text-rose" : "text-mute"}`}>{save.message}</p>
       )}
       <p className="text-[12px] leading-relaxed text-mute">
-        Key 只存在后端，前端只拿得到打码后的一小段。合成的音频不落盘，播完就没了。
+        Key 只存在后端，前端只拿得到打码后的一小段。合成的音频不落盘，播完就没了。自定义音色填的是 MiniMax 控制台里那段 voice_id，克隆出来的音色也能用。
       </p>
     </div>
   );

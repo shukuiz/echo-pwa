@@ -11,12 +11,14 @@ import {
 } from "@/components/Icons";
 import { Card, Msg, uid, useStore } from "@/lib/store";
 import { fileKindLabel, Think } from "@/lib/mock";
-import { api, ApiError, ECHO_AUTH_ENABLED, ECHO_AUTH_REQUIRED_EVENT, type ReplyAction } from "@/lib/api";
+import { albumSave, api, ApiError, ECHO_AUTH_ENABLED, ECHO_AUTH_REQUIRED_EVENT, type ReplyAction } from "@/lib/api";
 import { refreshLive, resumeGenerations, startGeneration, stopGeneration, useLiveGen } from "@/lib/generation";
 import { addFavorite } from "@/lib/favorites";
 import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
 import { playBlob, startRecording, stopPlaying, type Recorder } from "@/lib/wav";
+import { renderChatShot } from "@/lib/shot";
+import type { EchoAction } from "@/lib/echo-actions";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
 type Menu = { id: string; mine: boolean; rect: { top: number; left: number; width: number; height: number }; text: string; cls: string };
@@ -124,12 +126,19 @@ function Chat() {
   const [anchor, setAnchor] = useState<string | null>(null);
   const [askDel, setAskDel] = useState<string[] | null>(null);
   const [modelMenu, setModelMenu] = useState(false);
+  const [displayMenu, setDisplayMenu] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const imgInputRef = useRef<HTMLInputElement>(null);
   // 文件：只留文件名和抽出来的文字，原文不落盘
   const [pendingFiles, setPendingFiles] = useState<{ name: string; chars: number; text: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachMenu, setAttachMenu] = useState(false);
+  // 截图：先选范围，再预览，最后选存哪本相册
+  const [shot, setShot] = useState<{ id: string; img?: string } | null>(null);
+  const [skills, setSkills] = useState<any[]>([]);
+  const [skillId, setSkillId] = useState<string | null>(null);
+  useEffect(() => { api.getSkills().then(x => setSkills(x.skills)).catch(() => {}); }, []);
+  useEffect(() => { const id = params.get("skill"); if (id) setSkillId(id); }, [params]);
   const [recording, setRecording] = useState(false);
   const [recLevel, setRecLevel] = useState(0);
   const recRef = useRef<Recorder | null>(null);
@@ -221,7 +230,11 @@ function Chat() {
 
   /** 把最近 20 条消息发给后端，流式逐字回显；模型在这一刻定下，生成中途换模型不影响这一条 */
   function doChat(history: Msg[], errId?: string, regenerate = false) {
-    void startGeneration({ set: (fn) => set("messages", fn), history, echoId: errId, regenerate, model: settings.model });
+    void startGeneration({
+      set: (fn) => set("messages", fn), history, echoId: errId, regenerate, model: settings.model,
+      skillIds: skillId ? [skillId] : [],
+      onActions: (acts, ctx) => runEchoActions(acts, ctx.text),
+    });
   }
 
   function sendText(raw: string, imgs: string[] = [], files: { name: string; chars: number; text: string }[] = []) {
@@ -235,6 +248,7 @@ function Chat() {
     };
     set("messages", (ms) => [...ms, userMsg]);
     doChat([...messagesRef.current, userMsg]);
+    setSkillId(null);
   }
 
   function send() {
@@ -331,6 +345,62 @@ function Chat() {
   }
 
   /** 把这条消息存成 .md 文件（浏览器直接下载，不经过服务器） */
+  /** 截一张聊天图：one=只要这一条，n=从这条往前数 n 条 */
+  function buildShot(id: string, n: number | "one") {
+    const idx = messages.findIndex((m) => m.id === id);
+    if (idx < 0) return;
+    const slice = n === "one" ? [messages[idx]] : messages.slice(Math.max(0, idx - n + 1), idx + 1);
+    const rows = slice
+      .filter((m) => (m.text || "").trim() || m.images?.length || m.files?.length)
+      .map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || (m.images?.length ? "（发了图片）" : "（发了文件）") }));
+    try {
+      setShot({ id, img: renderChatShot(rows) });
+    } catch {
+      toast("这张没画出来，再试一次");
+    }
+  }
+
+  /** 存进相册：mine 是我的（echo 看不到图），echo 是它自己的 */
+  async function saveShot(who: "mine" | "echo") {
+    if (!shot?.img) return;
+    try {
+      await albumSave({ who, dataUrl: shot.img, title: "聊天截图", source: "chat-shot" });
+      toast(who === "mine" ? "存进你的相册了 ✿" : "存进 echo 的相册了 ✿");
+      setShot(null);
+    } catch {
+      toast("没存上，等下再试");
+    }
+  }
+
+  /** echo 的小动作：语音 / 截图 / 记记忆 / 发文件。失败静默，不打扰正文 */
+  function runEchoActions(actions: EchoAction[], text: string) {
+    for (const a of actions) {
+      if (a.kind === "voice") {
+        if (settings.mute || settings.proactiveVoice === false) continue;
+        api.speak(text.slice(0, 900)).then((blob) => { void playBlob(blob); }).catch(() => {});
+      } else if (a.kind === "shot") {
+        const rows = messages.slice(-10).map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || "" }));
+        try {
+          const img = renderChatShot([...rows, { role: "echo", text }]);
+          albumSave({ who: a.who, dataUrl: img, title: "聊天截图", source: "chat-shot" })
+            .then(() => toast(a.who === "mine" ? "存进你的相册了 ✿" : "存进 echo 的相册了 ✿"))
+            .catch(() => {});
+        } catch {}
+      } else if (a.kind === "memory") {
+        createMemory({ kind: a.memKind, title: a.title, text: a.text })
+          .then(({ item }) => {
+            set("memory", (ms) => (ms.some((m) => m.id === item.id) ? ms : [...ms, item]));
+            toast(`记到记忆本了：${a.title}`);
+          })
+          .catch(() => toast("这条没记上，等下再试"));
+      } else if (a.kind === "file") {
+        const id = uid();
+        set("files", (fs) => [...fs, { id, kind: "preset" as const, name: a.name, content: a.content, at: Date.now(), via: "echo" }]);
+        toast(`echo 发了个文件：${a.name}`);
+      }
+    }
+  }
+
   function saveAsFile(id: string) {
     const m = messages.find((x) => x.id === id);
     setMenu(null);
@@ -599,6 +669,7 @@ function Chat() {
               ))}
             </div>
           )}
+          {skillId && <div className="mb-1 inline-flex items-center gap-1 rounded-full bg-sakura/50 px-2 py-1 text-xs text-rose">技能 · {skills.find(s=>s.id===skillId)?.name || skillId}<button onClick={()=>setSkillId(null)}>×</button></div>}
           <textarea
             ref={inputRef}
             value={input}
@@ -618,7 +689,7 @@ function Chat() {
               {attachMenu && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setAttachMenu(false)} />
-                  <div className="absolute bottom-full left-0 z-30 mb-2 w-[176px] animate-pop overflow-hidden rounded-[18px] bg-tile p-1 shadow-soft">
+                  <div className="absolute bottom-full left-0 z-30 mb-2 w-[280px] animate-pop overflow-hidden rounded-[18px] bg-tile p-2 shadow-soft"><div className="px-2 pb-1 text-xs text-mute">这一条要带上的东西</div>
                     <button type="button" onClick={() => { setAttachMenu(false); imgInputRef.current?.click(); }}
                       className="press flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left text-[14px]">
                       <IconImage size={16} /> 图片
@@ -626,7 +697,7 @@ function Chat() {
                     <button type="button" onClick={() => { setAttachMenu(false); fileInputRef.current?.click(); }}
                       className="press flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left text-[14px]">
                       <IconFolder size={16} /> 文件（PDF / Word / 文本）
-                    </button>
+                    </button>{skills.slice(0,8).map((sk) => <button key={sk.id} type="button" onClick={() => { setSkillId(sk.id); setAttachMenu(false); }} className="press flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-left text-[14px]">技能 · {sk.name}</button>)}
                   </div>
                 </>
               )}
@@ -676,31 +747,16 @@ function Chat() {
         </Link>
       }
       sub={
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))}
-            className="mute flex items-center gap-1.5 text-[12px]"
-            role="switch"
-            aria-checked={!quiet}
-            aria-label="自动展开思考"
-          >
-            {busy ? "忙碌中 · " : ""}自动展开思考
-            <span className={`relative h-[16px] w-[28px] rounded-capsule transition ${!quiet ? "bg-rose" : "bg-orb/35"}`}>
-              <span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white transition-all ${!quiet ? "left-[14px]" : "left-[2px]"}`} />
-            </span>
-          </button>
-          <button
-            onClick={() => set("settings", (s) => ({ ...s, splitBubbles: !s.splitBubbles }))}
-            className="mute flex items-center gap-1.5 text-[12px]"
-            role="switch"
-            aria-checked={!!settings.splitBubbles}
-            aria-label="分气泡显示"
-          >
-            分气泡
-            <span className={`relative h-[16px] w-[28px] rounded-capsule transition ${settings.splitBubbles ? "bg-rose" : "bg-orb/35"}`}>
-              <span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white transition-all ${settings.splitBubbles ? "left-[14px]" : "left-[2px]"}`} />
-            </span>
-          </button>
+        <div className="relative flex items-center gap-2">
+          {busy && <span className="text-[12px] text-mute">忙碌中 ·</span>}
+          <button type="button" onClick={() => setDisplayMenu((v) => !v)} className="mute rounded-capsule px-2.5 py-1 text-[12px]" aria-expanded={displayMenu}>显示</button>
+          {displayMenu && <>
+            <div className="fixed inset-0 z-20" onClick={() => setDisplayMenu(false)} />
+            <div className="absolute right-0 top-full z-30 mt-2 w-[176px] rounded-[18px] bg-tile p-1 shadow-soft">
+              <button type="button" onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">自动展开思考<span className={`relative h-[16px] w-[28px] rounded-capsule ${!quiet ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${!quiet ? "left-[14px]" : "left-[2px]"}`} /></span></button>
+              <button type="button" onClick={() => set("settings", (s) => ({ ...s, splitBubbles: !s.splitBubbles }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">分气泡<span className={`relative h-[16px] w-[28px] rounded-capsule ${settings.splitBubbles ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${settings.splitBubbles ? "left-[14px]" : "left-[2px]"}`} /></span></button>
+            </div>
+          </>}
         </div>
       }
     >
@@ -805,7 +861,7 @@ function Chat() {
       )}
 
       {menu && (() => {
-        const H = 172, vh = window.innerHeight, vw = Math.min(window.innerWidth, 430);
+        const H = 212, vh = window.innerHeight, vw = Math.min(window.innerWidth, 430);
         const regen = canRegenerate(menu.id);
         const bubbleTop = Math.max(70, Math.min(menu.rect.top, vh - H - menu.rect.height - 24));
         const below = bubbleTop + menu.rect.height + 10;
@@ -817,6 +873,7 @@ function Chat() {
           ["select", "多选", () => startSelect(menu.id)],
           ["chev", "从这句以后", () => startSelect(menu.id, "after")],
           ["download", "存成文件", () => saveAsFile(menu.id)],
+          ["image", "截成图片", () => { setMenu(null); setShot({ id: menu.id }); }],
           ...(regen ? [["retry", "重新生成本轮", regenerate] as [string, string, () => void]] : []),
           ["trash", "删除", () => { setMenu(null); setAskDel([menu.id]); }, "danger"],
         ];
@@ -835,6 +892,33 @@ function Chat() {
           </div>
         );
       })()}
+
+      {shot && (
+        <>
+          <div className="gmask" onClick={() => setShot(null)} />
+          <div className="gsheet on" role="dialog" aria-label="截成图片">
+            <div className="grab" />
+            <div className="sh-h"><b>{shot.img ? "存到哪本相册？" : "截哪一段？"}</b></div>
+            {shot.img ? (
+              <>
+                <img src={shot.img} alt="聊天截图预览" className="mx-auto max-h-[46vh] w-auto rounded-[18px] object-contain" />
+                <p className="hint" style={{ marginTop: 8, marginBottom: 10 }}>我的相册 echo 看不到图，只知道你截了图</p>
+                <div className="addl">
+                  <button className="gbtn" onClick={() => saveShot("mine")}>我的相册</button>
+                  <button className="gbtn" onClick={() => saveShot("echo")}>echo 的相册</button>
+                  <button className="gbtn" onClick={() => buildShot(shot.id, 10)}>换个范围</button>
+                </div>
+              </>
+            ) : (
+              <div className="addl">
+                <button className="gbtn" onClick={() => buildShot(shot.id, "one")}>这一条</button>
+                <button className="gbtn" onClick={() => buildShot(shot.id, 10)}>最近 10 条</button>
+                <button className="gbtn" onClick={() => buildShot(shot.id, 30)}>最近 30 条</button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {askDel && (
         <>
@@ -855,6 +939,8 @@ function Chat() {
 }
 
 function Avatar() {
+  const { settings } = useStore();
+  if (settings.avatarEcho) return <img src={settings.avatarEcho} alt="echo" className="h-8 w-8 shrink-0 self-end rounded-full object-cover" />;
   return (
     <span className="ec-avatar grid h-8 w-8 shrink-0 place-items-center self-end rounded-full bg-sakura/40 text-rose">
       <IconStar size={16} />
@@ -982,8 +1068,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} translate={translateThink} />
     : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} translate={translateThink} />
-    : !mine && latest && m.status === "done" && m.text
-      ? <p className="mb-1 pl-10 text-[12px]" data-onwp>这条回复没有收到模型提供的思考内容</p> : null;
+    : null;
   // 只拆「echo 的、生成完成的、开关打开的、短回复」；流式/我方/小作文都保持单气泡
   const parts = m.text ? (!mine && split && m.status === "done" ? splitTextIntoBubbles(m.text) : [m.text]) : [];
   const multi = parts.length > 1;

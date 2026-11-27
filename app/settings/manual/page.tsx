@@ -89,7 +89,7 @@ export default function ManualPage() {
 
         {askThread && (
           <div className="block-white space-y-3 rounded-[24px] p-4">
-            <p className="text-[14px]">要现在让 Codex 开一段新对话、读新说明书吗？之前的上下文它会忘掉，echo 里的聊天记录还在。</p>
+            <p className="text-[14px]">要现在让 Codex 开一段新对话、读新说明书吗？echo 里的聊天记录也会带过去。</p>
             <div className="flex flex-wrap gap-2">
               <button type="button" className="btn-primary min-h-11 px-4" onClick={newThread} disabled={busy}>开新对话</button>
               <button type="button" className="btn-ghost min-h-11 px-4" onClick={() => setAskThread(false)}>先不用</button>

@@ -156,11 +156,10 @@ export function CodexEditor({ config, activate, onClose, onSaved }: {
   }
 
   async function newThread() {
-    if (!window.confirm("开一段新的 Codex 对话？\nCodex 会忘掉之前聊的上下文，重新读一遍说明书。echo 里的聊天记录不会删。")) return;
     setReset({ kind: "working", message: "正在开新对话…" });
     try {
       await api.codexResetThread();
-      setReset({ kind: "success", message: "好啦，下一条消息就是新对话 ✿" });
+      setReset({ kind: "success", message: "新对话开好了，之前聊的我都带着 ✿" });
       refresh();
     } catch (e) {
       setReset({ kind: "error", message: errorMessage(e, "没能开新对话") });
