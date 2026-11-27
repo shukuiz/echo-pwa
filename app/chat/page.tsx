@@ -287,7 +287,7 @@ function Chat() {
   async function beginRecord() {
     if (recording || busy) return;
     try {
-      recRef.current = await startRecording(setRecLevel);
+      recRef.current = await startRecording(setRecLevel, () => { toast("说满 1 分钟啦，先发这段"); void endRecord(); });
       setRecording(true);
       navigator.vibrate?.(6);
     } catch {

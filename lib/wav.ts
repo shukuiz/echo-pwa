@@ -52,8 +52,8 @@ export type Recorder = {
   cancel: () => void;
 };
 
-/** 开始录音；onLevel 用来画音量条（0–1） */
-export async function startRecording(onLevel?: (level: number) => void): Promise<Recorder> {
+/** 开始录音；onLevel 用来画音量条（0–1）；超过 60 秒会自动喊停（onAutoStop） */
+export async function startRecording(onLevel?: (level: number) => void, onAutoStop?: () => void): Promise<Recorder> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
@@ -64,8 +64,11 @@ export async function startRecording(onLevel?: (level: number) => void): Promise
   const chunks: Float32Array[] = [];
   let peak = 0;
   let stopped = false;
+  // 60 秒自动停：再长文件就太大了，说太久也认不准
+  const autoTimer = setTimeout(() => { if (!stopped) onAutoStop?.(); }, 60_000);
 
   const close = () => {
+    clearTimeout(autoTimer);
     try { node.disconnect(); } catch {}
     try { source.disconnect(); } catch {}
     stream.getTracks().forEach((t) => t.stop());
@@ -82,6 +85,8 @@ export async function startRecording(onLevel?: (level: number) => void): Promise
   };
   source.connect(node);
   node.connect(ctx.destination); // 某些浏览器不接输出就不跑 onaudioprocess
+  // iOS 上 AudioContext 常以 suspended 起步，不 resume 就收不到数据
+  if (ctx.state === "suspended") await ctx.resume().catch(() => {});
 
   return {
     stop() {
