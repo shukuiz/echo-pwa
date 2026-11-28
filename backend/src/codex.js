@@ -11,21 +11,7 @@ import readline from "node:readline";
 import { paths, readJSON, readText, writeJSON, DATA_DIR } from "./storage.js";
 import { readChat } from "./chat-store.js";
 import { getSkills } from "./skills.js";
-
-// 让模型知道「小动作」暗号：前端在回复结束时剥掉暗号并执行（lib/echo-actions.ts）
-const ECHO_ACTIONS_HINT = `
-【手上的小动作】
-你偶尔可以主动做点事，不要每条都用，一件事一天一两次就够。
-要做的時候，在回复的最末尾单独起一行写暗号，暗号不会被她看到，前端会替你执行：
-
-[[echo:voice]]                 —— 这条回复念给她听
-[[echo:shot:mine]]             —— 把刚才这段聊天截成图，存进她的相册（她能看到）
-[[echo:shot:echo]]             —— 把这段聊天截成图，存进你自己的相册
-[[echo:memory:kind|标题|内容]]  —— 把这件事记进记忆本，她那边会收到提醒（kind 只能是 scene / event / preference / persona）
-[[echo:file:名字.md]]           —— 发一个文件给她，下一行开始用 \`\`\` 包住文件内容
-
-暗号必须单独占一行、放在最末尾。不要解释暗号，不要假装发了语音或文件。
-`;
+import { ECHO_ACTIONS_HINT } from "./echo-actions-hint.js";
 
 export const CODEX_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
 export const DEFAULT_CODEX = Object.freeze({ model: "", effort: "medium", showThinking: true });
