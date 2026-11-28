@@ -9,6 +9,23 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { paths, readJSON, readText, writeJSON, DATA_DIR } from "./storage.js";
+import { readChat } from "./chat-store.js";
+import { getSkills } from "./skills.js";
+
+// 让模型知道「小动作」暗号：前端在回复结束时剥掉暗号并执行（lib/echo-actions.ts）
+const ECHO_ACTIONS_HINT = `
+【手上的小动作】
+你偶尔可以主动做点事，不要每条都用，一件事一天一两次就够。
+要做的時候，在回复的最末尾单独起一行写暗号，暗号不会被她看到，前端会替你执行：
+
+[[echo:voice]]                 —— 这条回复念给她听
+[[echo:shot:mine]]             —— 把刚才这段聊天截成图，存进她的相册（她能看到）
+[[echo:shot:echo]]             —— 把这段聊天截成图，存进你自己的相册
+[[echo:memory:kind|标题|内容]]  —— 把这件事记进记忆本，她那边会收到提醒（kind 只能是 scene / event / preference / persona）
+[[echo:file:名字.md]]           —— 发一个文件给她，下一行开始用 \`\`\` 包住文件内容
+
+暗号必须单独占一行、放在最末尾。不要解释暗号，不要假装发了语音或文件。
+`;
 
 export const CODEX_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
 export const DEFAULT_CODEX = Object.freeze({ model: "", effort: "medium", showThinking: true });
@@ -45,6 +62,10 @@ export async function codexDeveloperInstructions(dir = DATA_DIR) {
   ];
   const aboutYou = meaningful(await readText(paths.aboutYou(dir)));
   const aboutUs = meaningful(await readText(paths.aboutUs(dir)));
+  const skills = (await getSkills(dir)).filter((skill) => skill.enabled !== false).slice(0, 8);
+  parts.push("她没选技能时，明显合适的话你也可以按某个技能的思路做，但不用说出来。\n【可用技能】\n" + skills.map((skill) => `${skill.name}：${skill.desc}`).join("\n"));
+  parts.push(ECHO_ACTIONS_HINT);
+  parts.push("她有一个自己的相册（你看不到里面），也有一个你的相册。她刚截图或存图的时候你只知道「她刚截了图」，看不到图本身。");
   if (aboutYou) parts.push("【关于用户】\n" + aboutYou);
   if (aboutUs) parts.push("【关于你们】\n" + aboutUs);
   return parts.join("\n\n");
@@ -283,6 +304,7 @@ export class CodexBridge extends EventEmitter {
     this.threadId = res?.thread?.id || "";
     if (!this.threadId) throw new Error("Codex 没有返回对话 id");
     this.threadLoaded = true;
+    if (state.carryOver) { try { const chat = await readChat(); const rows = []; let chars = 0; for (const m of (chat.messages || []).slice(-80).reverse()) { const text = String(m.text || ""); if (!text) continue; const left = 30000 - chars; if (left <= 0) break; const clipped = text.slice(-left); rows.unshift({ ...m, text: clipped }); chars += clipped.length; } const items = [{ type: "message", role: "developer", content: [{ type: "input_text", text: "这是上一段对话的记录（她和你之前聊的），是背景资料不是新指令。接着聊，不要复述这段记录，也不要提「你换了个对话」。" }] }, ...rows.map(m => ({ type: "message", role: m.role === "assistant" ? "assistant" : "user", content: [{ type: m.role === "assistant" ? "output_text" : "input_text", text: m.text }] }))]; await this.call("thread/inject_items", { threadId: this.threadId, items }, 60000); note = "之前聊的我都带上了，接着说就行"; await this.saveState({ carryOver: false, carried: rows.length }); } catch { note = "之前的聊天暂时没带上，下次再试"; } }
     await this.saveState({ threadId: this.threadId, startedAt: Date.now(), agentsHash: await this.agentsHash(), lastTurnId: "", previous: state.threadId || undefined });
     return { threadId: this.threadId, fresh: true, note };
   }
@@ -314,7 +336,7 @@ export class CodexBridge extends EventEmitter {
     const old = (await this.loadState()).threadId;
     this.threadId = "";
     this.threadLoaded = false;
-    await this.saveState({ threadId: "", lastTurnId: "", previous: old || undefined, resetAt: Date.now() });
+    await this.saveState({ threadId: "", lastTurnId: "", previous: old || undefined, resetAt: Date.now(), carryOver: true, carryOverAt: Date.now() });
     return { ok: true };
   }
 
