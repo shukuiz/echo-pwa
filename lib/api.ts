@@ -34,8 +34,12 @@ export type ManualFile = { content: string; defaultContent?: string; savedAt?: n
 export type VoiceSettings = {
   enabled: boolean; baseUrl: string; groupId: string;
   ttsModel: string; asrModel: string; voiceId: string; speed: number;
+  language: string; ttsPrompt: string;
   hasKey: boolean; keyMask: string;
   presets: { id: string; name: string }[];
+  ttsModels?: { id: string; name: string }[];
+  asrModels?: { id: string; name: string }[];
+  languages?: { id: string; name: string }[];
 };
 
 export type EchoSettings = Omit<Settings, "apiKey"> & {

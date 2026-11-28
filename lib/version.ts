@@ -1,11 +1,20 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
 
-export const APP_VERSION = "0.13.4";
+export const APP_VERSION = "0.13.5";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.13.5", date: "2026-11-28", title: "说话这件小事，调得更顺了 ✿",
+    items: [
+      { t: "语音修好了", d: "之前说话是空的：服务器上少装了语音模块、Key 还被复制时带的一小段符号弄坏了。现在都修好，试听能出声了" },
+      { t: "选模型", d: "设置 → 语音 里可以选朗读模型和识别模型，2.8 / 2.6 都有" },
+      { t: "选语种", d: "中文、英语、日语等十几种语言，朗读和按住说话都跟着走" },
+      { t: "朗读风格", d: "多了一个风格提示词输入框，比如填「温柔一点，慢一点」，让 echo 按你喜欢的语气念" },
+    ],
+  },
   {
     version: "0.13.4", date: "2026-11-28", title: "它会自己动一动了 ✿",
     items: [
