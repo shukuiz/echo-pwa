@@ -1,11 +1,19 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
 
-export const APP_VERSION = "0.13.5";
+export const APP_VERSION = "0.13.6";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.13.6", date: "2026-11-28", title: "语音条、对讲机和自己的头像 ✿",
+    items: [
+      { t: "语音条", d: "echo 主动发语音时不再突然出声，而是变成一条能反复点播的语音条；每条回复也能手动「转语音」，点一下生成、再点播放" },
+      { t: "对讲机", d: "聊天顶栏「显示」→「对讲机」打开后，按住麦克风说话松手就发出去，echo 回完自动念给你听，像打电话一样一句接一句" },
+      { t: "看到自己的头像", d: "设置 → 头像 换好以后，聊天里你自己的气泡旁边也会显示头像了" },
+    ],
+  },
   {
     version: "0.13.5", date: "2026-11-28", title: "说话这件小事，调得更顺了 ✿",
     items: [

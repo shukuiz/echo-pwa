@@ -136,3 +136,35 @@ export function stopPlaying() {
   try { audio.pause(); } catch {}
   URL.revokeObjectURL(url);
 }
+
+/* ---------- 语音条缓存 ---------- */
+// 合成的语音条 Blob 只放在内存里（跟后端「音频不落盘」一致）：刷新页面就没了，
+// 前端会保留消息上的 voice 标记，找不到 Blob 时提示重新生成。
+
+const voiceCache = new Map<string, Blob>();
+
+export function cacheVoice(id: string, blob: Blob) {
+  voiceCache.set(id, blob);
+  return blob;
+}
+
+export function getVoiceBlob(id: string): Blob | undefined {
+  return voiceCache.get(id);
+}
+
+export function dropVoice(id: string) {
+  voiceCache.delete(id);
+}
+
+/** 量一段音频的时长（秒）；量不到就回 0，语音条不显示数字时长 */
+export function blobDuration(blob: Blob): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    const done = (v: number) => { resolve(v); URL.revokeObjectURL(url); };
+    audio.onloadedmetadata = () => done(Number.isFinite(audio.duration) ? audio.duration : 0);
+    audio.onerror = () => done(0);
+    // 兜底：有些浏览器 mp3 的 metadata 迟迟不来
+    setTimeout(() => done(0), 3000);
+  });
+}

@@ -16,7 +16,7 @@ import { refreshLive, resumeGenerations, startGeneration, stopGeneration, useLiv
 import { addFavorite } from "@/lib/favorites";
 import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
-import { playBlob, startRecording, stopPlaying, type Recorder } from "@/lib/wav";
+import { blobDuration, cacheVoice, getVoiceBlob, playBlob, startRecording, stopPlaying, type Recorder } from "@/lib/wav";
 import { renderChatShot } from "@/lib/shot";
 import type { EchoAction } from "@/lib/echo-actions";
 
@@ -144,6 +144,9 @@ function Chat() {
   const recRef = useRef<Recorder | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [speaking, setSpeaking] = useState<string | null>(null);
+  // 对讲机模式：按住说话松手直接发，echo 回复后自动朗读（不存语音条）
+  const [walkie, setWalkie] = useState(false);
+  const spokenRef = useRef<string | null>(null);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const [winTitle, setWinTitle] = useState("");
@@ -201,6 +204,17 @@ function Chat() {
 
   useEffect(() => () => clearAll(), []);
 
+  // 对讲机：最后一条 echo 回复写完（done）就自动朗读，同一条只念一次
+  useEffect(() => {
+    if (!walkie) return;
+    const last = messages.at(-1);
+    if (last && last.role === "echo" && last.status === "done" && last.text && spokenRef.current !== last.id) {
+      spokenRef.current = last.id;
+      void autoSpeak(last);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, walkie]);
+
   // 回到聊天页、从后台切回来：接上后端还在写的回复（离开页面不会取消生成）
   useEffect(() => {
     const setMsgs = (fn: (ms: Msg[]) => Msg[]) => set("messages", fn);
@@ -233,7 +247,7 @@ function Chat() {
     void startGeneration({
       set: (fn) => set("messages", fn), history, echoId: errId, regenerate, model: settings.model,
       skillIds: skillId ? [skillId] : [],
-      onActions: (acts, ctx) => runEchoActions(acts, ctx.text),
+      onActions: (acts, ctx) => runEchoActions(acts, ctx),
     });
   }
 
@@ -322,7 +336,12 @@ function Chat() {
     setTranscribing(true);
     try {
       const r = await api.transcribe(wav);
-      setInput((v) => (v ? `${v} ${r.text}` : r.text));
+      if (walkie) {
+        // 对讲机：松手就发，不用再点发送
+        if (r.text.trim()) sendText(r.text);
+      } else {
+        setInput((v) => (v ? `${v} ${r.text}` : r.text));
+      }
     } catch (e) {
       toast((e as Error).message || "没听清");
     } finally {
@@ -342,6 +361,12 @@ function Chat() {
     } finally {
       setSpeaking(null);
     }
+  }
+
+  /** 对讲机模式：echo 回复后自动念出来（临时朗读，不存语音条） */
+  async function autoSpeak(m: Msg) {
+    if (settings.mute || !m.text) return;
+    try { await playBlob(await api.speak(m.text.slice(0, 900))); } catch {}
   }
 
   /** 把这条消息存成 .md 文件（浏览器直接下载，不经过服务器） */
@@ -372,12 +397,30 @@ function Chat() {
     }
   }
 
+  /** 合成一条语音并挂到消息上，变成可反复播放的语音条（音频只在内存，不落盘） */
+  async function voiceToBar(id: string, text: string) {
+    const t = (text || "").trim();
+    if (!t || settings.mute) return;
+    set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur: 0, pending: true } } : m)));
+    try {
+      const blob = await api.speak(t.slice(0, 900));
+      const dur = await blobDuration(blob);
+      cacheVoice(id, blob);
+      set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur, pending: false } } : m)));
+    } catch (e) {
+      set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: undefined } : m)));
+      toast((e as Error).message || "语音没生成出来");
+    }
+  }
+
   /** echo 的小动作：语音 / 截图 / 记记忆 / 发文件。失败静默，不打扰正文 */
-  function runEchoActions(actions: EchoAction[], text: string) {
+  function runEchoActions(actions: EchoAction[], ctx: { text: string; echoId: string }) {
+    const { text, echoId } = ctx;
     for (const a of actions) {
       if (a.kind === "voice") {
-        if (settings.mute || settings.proactiveVoice === false) continue;
-        api.speak(text.slice(0, 900)).then((blob) => { void playBlob(blob); }).catch(() => {});
+        // 对讲机模式会自动朗读整条回复，暗号语音就跳过，避免同一句念两遍
+        if (walkie || settings.mute || settings.proactiveVoice === false) continue;
+        void voiceToBar(echoId, text);
       } else if (a.kind === "shot") {
         const rows = messages.slice(-10).map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || "" }));
         try {
@@ -678,7 +721,7 @@ function Chat() {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
             }}
             rows={1}
-            placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : "跟 echo 说点什么…"}
+            placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : walkie ? "对讲机：按住麦克风说，松手就发" : "跟 echo 说点什么…"}
             className="ec-input block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
@@ -703,13 +746,13 @@ function Chat() {
               )}
             </div>
             <button
-              aria-label="按住说话"
+              aria-label={walkie ? "对讲机：按住说，松手发" : "按住说话"}
               onPointerDown={(e) => { e.preventDefault(); void beginRecord(); }}
               onPointerUp={() => void endRecord()}
               onPointerCancel={() => void endRecord(true)}
               onContextMenu={(e) => e.preventDefault()}
               disabled={transcribing || busy}
-              className={`ec-btn chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : ""} disabled:opacity-50`}
+              className={`ec-btn chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : walkie ? "bg-sakura/40 text-rose" : ""} disabled:opacity-50`}
             >
               {transcribing ? <span className="text-[11px]">听…</span> : <IconMic size={18} />}
             </button>
@@ -755,6 +798,7 @@ function Chat() {
             <div className="absolute right-0 top-full z-30 mt-2 w-[176px] rounded-[18px] bg-tile p-1 shadow-soft">
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">自动展开思考<span className={`relative h-[16px] w-[28px] rounded-capsule ${!quiet ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${!quiet ? "left-[14px]" : "left-[2px]"}`} /></span></button>
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, splitBubbles: !s.splitBubbles }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">分气泡<span className={`relative h-[16px] w-[28px] rounded-capsule ${settings.splitBubbles ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${settings.splitBubbles ? "left-[14px]" : "left-[2px]"}`} /></span></button>
+              <button type="button" onClick={() => setWalkie((v) => !v)} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">对讲机<span className={`relative h-[16px] w-[28px] rounded-capsule ${walkie ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${walkie ? "left-[14px]" : "left-[2px]"}`} /></span></button>
             </div>
           </>}
         </div>
@@ -802,7 +846,7 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} />
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} />
           </div>
         ))}
         {working && (
@@ -938,13 +982,55 @@ function Chat() {
   );
 }
 
-function Avatar() {
+function Avatar({ mine = false }: { mine?: boolean }) {
   const { settings } = useStore();
-  if (settings.avatarEcho) return <img src={settings.avatarEcho} alt="echo" className="h-8 w-8 shrink-0 self-end rounded-full object-cover" />;
+  const src = mine ? settings.avatarMe : settings.avatarEcho;
+  if (src) return <img src={src} alt={mine ? "我" : "echo"} className="h-8 w-8 shrink-0 self-end rounded-full object-cover" />;
+  if (mine) return null; // 我没设头像就不占位，气泡保持靠右紧凑
   return (
     <span className="ec-avatar grid h-8 w-8 shrink-0 place-items-center self-end rounded-full bg-sakura/40 text-rose">
       <IconStar size={16} />
     </span>
+  );
+}
+
+/** 语音条：一条可反复播放的语音；音频在内存里，刷新后失效可重新生成 */
+function VoiceBar({ m, onRegen }: { m: Msg; onRegen: (m: Msg) => void }) {
+  const [playing, setPlaying] = useState(false);
+  const blob = getVoiceBlob(m.id);
+  if (m.voice?.pending) {
+    return (
+      <div className="mt-1.5 flex items-center gap-2 pl-1 text-[12px] text-mute" data-onwp>
+        <span className="h-1.5 w-1.5 animate-blink rounded-full bg-rose" /> 正在合成语音…
+      </div>
+    );
+  }
+  if (!blob) {
+    return (
+      <button type="button" onClick={() => onRegen(m)} className="press mt-1.5 flex items-center gap-1.5 pl-1 text-[12px] text-rose underline underline-offset-2" data-onwp>
+        <IconSpeaker size={13} /> 语音条失效，点此重新生成
+      </button>
+    );
+  }
+  const bars = [6, 10, 14, 11, 16, 12, 8, 5];
+  const dur = m.voice?.dur || 0;
+  const toggle = () => {
+    if (playing) { stopPlaying(); setPlaying(false); return; }
+    setPlaying(true);
+    void playBlob(blob).finally(() => setPlaying(false));
+  };
+  return (
+    <button type="button" onClick={toggle} className="press mt-1.5 flex max-w-full items-center gap-2 pl-1" data-onwp>
+      <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${playing ? "bg-rose text-white" : "bg-sakura/40 text-rose"}`}>
+        {playing ? <IconStop size={13} /> : <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z" /></svg>}
+      </span>
+      <span className="flex h-6 items-end gap-[2px]">
+        {bars.map((h, i) => (
+          <span key={i} className={`w-[3px] rounded-full ${playing ? "animate-blink bg-rose" : "bg-rose/70"}`} style={{ height: `${h}px`, animationDelay: `${i * 0.15}s` }} />
+        ))}
+      </span>
+      <span className="shrink-0 text-[12px] text-mute">{playing ? "播放中…" : dur ? fmtDur(dur * 1000) : "语音"}</span>
+    </button>
   );
 }
 
@@ -1061,7 +1147,7 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, onAction, busy, onSpeak, speaking }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null }) {
+function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, onAction, busy, onSpeak, speaking, onVoice }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!(m.images && m.images.length);
@@ -1138,19 +1224,29 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
         </div>
         {mine && <div className="clear-both" />}
         {m.card && m.status === "done" && <ResultCard card={m.card} />}
+        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} />}
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
         {m.status !== "streaming" && (
           <p className={`ec-time mt-1 flex items-center gap-2 px-2 text-[11px] opacity-80 ${mine ? "justify-end" : ""}`} data-onwp>
             <span>{fmtTime(m.at)}</span>
             {!mine && m.text && (
-              <button type="button" aria-label={speaking === m.id ? "停止朗读" : "朗读这条"} onClick={() => onSpeak(m)} className="press flex items-center gap-1">
-                <IconSpeaker size={13} className={speaking === m.id ? "text-rose" : ""} />
-                {speaking === m.id && <span className="text-rose">朗读中</span>}
-              </button>
+              <>
+                <button type="button" aria-label={speaking === m.id ? "停止朗读" : "朗读这条"} onClick={() => onSpeak(m)} className="press flex items-center gap-1">
+                  <IconSpeaker size={13} className={speaking === m.id ? "text-rose" : ""} />
+                  {speaking === m.id && <span className="text-rose">朗读中</span>}
+                </button>
+                {m.status === "done" && (
+                  <button type="button" aria-label={m.voice ? "重新生成语音条" : "转成语音条"} onClick={() => onVoice(m)} className="press flex items-center gap-1 text-mute">
+                    <IconMic size={12} />
+                    {m.voice ? "重做语音" : "转语音"}
+                  </button>
+                )}
+              </>
             )}
           </p>
         )}
+        {mine && <Avatar mine />}
       </div>
     </div>
     {m.status === "error" && <div className="mt-1.5"><ErrorCard m={m} onAction={onAction} busy={busy} /></div>}

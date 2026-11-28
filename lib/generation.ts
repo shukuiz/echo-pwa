@@ -70,7 +70,7 @@ function poll(echoId: string, genId: string, misses = 0) {
 export async function startGeneration(opts: {
   set: SetMessages; history: Msg[]; echoId?: string; regenerate?: boolean; model?: string; skillIds?: string[];
   /** 回复里带了「小动作」暗号时回调：正文已经剥干净，动作交给页面去执行 */
-  onActions?: (actions: EchoAction[], ctx: { text: string }) => void;
+  onActions?: (actions: EchoAction[], ctx: { text: string; echoId: string }) => void;
 }) {
   setMsgs = opts.set;
   if (live) return;
@@ -121,7 +121,7 @@ export async function startGeneration(opts: {
       if (m.id !== echoId || m.genId !== genId) return m;
       const parsed = parseEchoActions(m.text);
       finalText = parsed.text;
-      if (parsed.actions.length) opts.onActions?.(parsed.actions, { text: parsed.text });
+      if (parsed.actions.length) opts.onActions?.(parsed.actions, { text: parsed.text, echoId });
       return { ...m, text: parsed.text, status: m.status === "stopped" ? "stopped" : "done" };
     }));
     setLive(null);
