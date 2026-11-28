@@ -85,6 +85,7 @@ export type Settings = {
   splitBubbles: boolean;
   /** 展开思考框时自动把英文思考翻成中文（免费接口，失败就显示原文） */
   thinkTranslate: boolean;
+  translateShow: "below" | "tap" | "off";
   mute: boolean;
   /** 让 echo 偶尔主动发语音（暗号 [[echo:voice]]） */
   proactiveVoice: boolean;
@@ -126,6 +127,7 @@ const defaultState: State = {
     showStatusBar: true,
     splitBubbles: true,
     thinkTranslate: true,
+    translateShow: "below",
     mute: false,
     proactiveVoice: true,
     tools: { translate: true, media: true, worldbook: true, miniapp: true, script: true },
@@ -253,6 +255,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           quietThink: prev.settings.quietThink,
           showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
           splitBubbles: prev.settings.splitBubbles,
+          translateShow: cfg.translateShow === "tap" || cfg.translateShow === "off" ? cfg.translateShow : "below",
           mute: cfg.mute ?? prev.settings.mute,
           tools: cfg.tools ?? prev.settings.tools,
         },

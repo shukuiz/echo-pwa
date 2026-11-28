@@ -120,6 +120,14 @@ export default function SettingsPage() {
           </div>
         </SettingsDrawer>
 
+        <SettingsDrawer title="翻译显示">
+          <Segmented
+            value={settings.translateShow ?? "below"}
+            onChange={(v) => upd({ translateShow: v })}
+            options={[{ value: "below", label: "气泡下小字" }, { value: "tap", label: "点开才看" }, { value: "off", label: "不显示" }]}
+          />
+        </SettingsDrawer>
+
         <SettingsDrawer title="头像">
           <div className="grid grid-cols-2 gap-4 p-4">
             <AvatarPicker label="我的头像" value={settings.avatarMe} onChange={(v) => set("settings", (s) => ({ ...s, avatarMe: v }))} />

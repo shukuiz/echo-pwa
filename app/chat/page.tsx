@@ -869,7 +869,7 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} />
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} />
           </div>
         ))}
         {working && (
@@ -1171,7 +1171,7 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void }) {
+function Bubble({ m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!(m.images && m.images.length);
@@ -1182,6 +1182,8 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
   // 只拆「echo 的、生成完成的、开关打开的、短回复」；流式/我方/小作文都保持单气泡
   const parts = m.text ? (!mine && split && m.status === "done" ? splitTextIntoBubbles(m.text) : [m.text]) : [];
   const multi = parts.length > 1;
+  const translation = !mine && m.card?.type === "translate" ? m.card.target : null;
+  const [showTranslation, setShowTranslation] = useState(translateShow === "below");
   const bubbleClass = `g bub ec-bubble inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
     mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
   }${multi ? " animate-rise" : ""}`;
@@ -1247,7 +1249,14 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
           ))}
         </div>
         {mine && <div className="clear-both" />}
-        {m.card && m.status === "done" && <ResultCard card={m.card} />}
+        {translation && translateShow !== "off" && (
+          translateShow === "tap" && !showTranslation ? (
+            <button type="button" onClick={() => setShowTranslation(true)} className="mt-1 min-h-11 px-2 text-left text-[13px] text-mute">看翻译</button>
+          ) : translateShow === "tap" ? (
+            <button type="button" onClick={() => setShowTranslation(false)} className="mt-1 min-h-11 px-2 text-left text-[13px] leading-5 text-mute">{translation}</button>
+          ) : <div className="mt-1 px-2 text-[13px] leading-5 text-mute">{translation}</div>
+        )}
+        {m.card && m.card.type !== "translate" && m.status === "done" && <ResultCard card={m.card} />}
         {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} />}
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
