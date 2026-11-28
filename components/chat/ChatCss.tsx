@@ -68,6 +68,7 @@ export default function ChatCss() {
       .ec-page .voice-peaks i.played { background:var(--hl, #c95b84); }
       .ec-page .voice-dur { font-size:13px; font-variant-numeric:tabular-nums; flex:none; }
       .ec-page .voice-text { margin:6px 2px 2px 8px; padding-top:6px; border-top:1px solid rgba(0,0,0,.08); font-size:15px; line-height:22px; white-space:pre-wrap; word-break:break-word; }
+      .ec-page .voice-tr { margin-top:4px; font-size:13px; line-height:19px; opacity:.7; }
       .ec-page .voice-jump { animation:echo-voice-jump .65s ease-in-out infinite alternate; }
       .ec-page .voice-pending { gap:2px; padding-left:1px; opacity:.7; animation:echo-voice-breathe 1.4s ease-in-out infinite; }
       @keyframes echo-voice-jump { to { transform:scaleY(1.18); } }

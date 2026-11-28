@@ -2,6 +2,7 @@
 // 打电话：全屏通话页。不用按住——一直在听，她停下约 1 秒就发；echo 说话时她一开口就打断
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { stripTr } from "@/lib/echo-actions";
 import { playBlob, startRecording, stopPlaying, unlockAudio, type Recorder } from "@/lib/wav";
 
 export type CallTurn = { role: "user" | "echo"; text: string };
@@ -109,7 +110,7 @@ export default function CallScreen({ avatar, history, onEnd, toast }: {
     } catch (e) {
       if ((e as Error)?.name !== "AbortError") toast((e as Error).message || "echo 没接上");
     }
-    reply = reply.replace(/\[\[echo:[^\]]*\]\]/g, "").trim();
+    reply = stripTr(reply.replace(/\[\[echo:[^\]]*\]\]/g, ""));
     if (!alive.current || ac.signal.aborted) return;
     if (!reply) { go("listening"); return; }
     addTurn({ role: "echo", text: reply });

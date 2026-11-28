@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import ChatCss from "@/components/chat/ChatCss";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -19,7 +19,7 @@ import { GIcon } from "@/components/glass/Wall";
 import { blobDuration, cacheVoice, getVoiceBlob, playBlob, seekVoice, startRecording, stopPlaying, unlockAudio, voicePlaybackState, type Recorder } from "@/lib/wav";
 import { renderChatShot } from "@/lib/shot";
 import CallScreen from "@/components/chat/CallScreen";
-import type { EchoAction } from "@/lib/echo-actions";
+import { inlineTr, splitTr, stripTr, type EchoAction } from "@/lib/echo-actions";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
 type Menu = { id: string; mine: boolean; rect: { top: number; left: number; width: number; height: number }; text: string; cls: string };
@@ -93,7 +93,8 @@ function splitTextIntoBubbles(text: string): string[] {
   const s = String(text ?? "");
   if (!s.trim()) return [s];
   const ellipses: string[] = [];
-  const masked = s.replace(/\.\.\.|……|···/g, (m) => {
+  // 译文暗号和省略号一样先遮住，别在里面断句
+  const masked = s.replace(/\[\[tr:[^\]]*\]\]|\.\.\.|……|···/g, (m) => {
     ellipses.push(m);
     return `\uE000${ellipses.length - 1}\uE001`;
   });
@@ -344,7 +345,7 @@ function Chat() {
     if (speaking === m.id) { stopPlaying(); setSpeaking(null); return; }
     setSpeaking(m.id);
     try {
-      await playBlob(await api.speak(m.text));
+      await playBlob(await api.speak(stripTr(m.text)));
     } catch (e) {
       toast((e as Error).message || "朗读失败");
     } finally {
@@ -404,7 +405,7 @@ function Chat() {
     if (!t || settings.mute) return;
     set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur: 0, pending: true } } : m)));
     try {
-      const blob = await api.speak(t.slice(0, 900));
+      const blob = await api.speak(stripTr(t).slice(0, 900));
       const dur = await blobDuration(blob);
       cacheVoice(id, blob);
       set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur, pending: false } } : m)));
@@ -509,7 +510,7 @@ function Chat() {
 
   async function copyMsg(id: string) {
     const m = messages.find((x) => x.id === id);
-    try { await navigator.clipboard.writeText(m?.text ?? ""); toast("已复制"); } catch { toast("复制失败了 (；´д｀)"); }
+    try { await navigator.clipboard.writeText(inlineTr(m?.text ?? "")); toast("已复制"); } catch { toast("复制失败了 (；´д｀)"); }
     setMenu(null);
   }
 
@@ -1124,7 +1125,7 @@ function VoiceBar({ m, onRegen, toast, textOpen, press }: { m: Msg; onRegen: (m:
         </button>
         <span className="voice-dur">{dur ? fmtDur(dur * 1000) : "语音"}</span>
       </div>
-      {textOpen && m.text && <div className="voice-text">{m.text}</div>}
+      {textOpen && m.text && <div className="voice-text">{stripTr(m.text)}{splitTr(m.text).trs.map((t, i) => <div key={i} className="voice-tr">{t}</div>)}</div>}
     </div>
   );
 }
@@ -1166,7 +1167,7 @@ function ThinkLine({ think, defaultOpen = false, live = false, translate = true 
       </div>
       {open && (
         <div className="thinkbox -mt-2 max-w-full rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute">
-          <p ref={box} className={`max-w-full whitespace-pre-wrap break-words ${live ? "max-h-40 overflow-y-auto" : ""}`}>{showingZh ? zh : think.text}</p>
+          <p ref={box} className={`max-w-full whitespace-pre-wrap break-words ${live ? "max-h-40 overflow-y-auto" : ""}`}>{mdBold(showingZh ? zh : think.text)}</p>
           {!live && (tr === "loading" || tr === "done") && (
             <div className="mt-1 flex items-center gap-2 text-[11.5px] opacity-70" data-onwp>
               {tr === "loading" ? <span>正在翻译…</span> : <button type="button" onClick={() => setOrig(!orig)} className="underline underline-offset-2">{orig ? "看译文" : "看原文"}</button>}
@@ -1179,6 +1180,11 @@ function ThinkLine({ think, defaultOpen = false, live = false, translate = true 
 }
 
 /** 长按 500ms 或右键：触发 cb；手指一动（滚动）就取消；长按触发后吞掉随后的那次点击 */
+/** 思考框里只认 **加粗**，别把星号露出来 */
+function mdBold(text: string) {
+  return String(text ?? "").split(/(\*\*[^*\n]+\*\*)/g).map((seg, i) => /^\*\*[^*\n]+\*\*$/.test(seg) ? <b key={i} className="text-ink">{seg.slice(2, -2)}</b> : seg.replace(/\*\*/g, ""));
+}
+
 function useLongPress(cb: (el: HTMLElement) => void, disabled: boolean, ms = 500) {
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -1303,9 +1309,9 @@ function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateTh
           </div>
         )}
         {!(!mine && m.voice) && <div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
-          {parts.map((p, i) => (
+          {parts.map((p, i) => { const trs = mine ? [] : splitTr(p).trs; return (
+            <Fragment key={i}>
             <div
-              key={i}
               {...(i === 0 ? press : {})}
               data-cssg
               data-who={mine ? "me" : "ai"}
@@ -1314,10 +1320,16 @@ function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateTh
               className={bubbleClass}
               style={bubbleStyle(i)}
             >
-              {p}
+              {splitTr(p).text}
               {m.status === "streaming" && i === parts.length - 1 && <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-rose" />}
             </div>
-          ))}
+            {trs.length > 0 && translateShow !== "off" && (
+              translateShow === "tap" && !showTranslation
+                ? <button type="button" onClick={() => setShowTranslation(true)} className="ec-tr block min-h-11 px-2 text-left text-[13px] text-mute" data-onwp>看翻译</button>
+                : <div className="ec-tr px-2 pt-0.5 text-[13px] leading-5" data-onwp onClick={translateShow === "tap" ? () => setShowTranslation(false) : undefined}>{trs.join(" ")}</div>
+            )}
+            </Fragment>
+          ); })}
         </div>}
         {mine && <div className="clear-both" />}
         {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} textOpen={voiceTextOpen} press={press as unknown as Record<string, unknown>} />}

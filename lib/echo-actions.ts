@@ -72,3 +72,20 @@ export function parseEchoActions(raw: string): { text: string; actions: EchoActi
     actions,
   };
 }
+
+// echo 自己写的译文：[[tr:中文]] 紧跟在外语句子后面。显示在气泡下面、朗读时剥掉
+const TR_ALL = /\[\[tr:([^\]]*)\]\]/g;
+/** 去掉译文暗号（含流式时写到一半的） */
+export function stripTr(text: string): string {
+  return String(text ?? "").replace(TR_ALL, "").replace(/\[\[tr:[^\]]*$/, "").replace(/[ \t]+(\n|$)/g, "$1").trim();
+}
+/** 拆出正文和译文 */
+export function splitTr(text: string): { text: string; trs: string[] } {
+  const trs: string[] = [];
+  String(text ?? "").replace(TR_ALL, (_, t: string) => { if (t.trim()) trs.push(t.trim()); return ""; });
+  return { text: stripTr(text), trs };
+}
+/** 复制、截图时把译文写成括号 */
+export function inlineTr(text: string): string {
+  return String(text ?? "").replace(TR_ALL, (_, t: string) => (t.trim() ? `（${t.trim()}）` : "")).replace(/\[\[tr:[^\]]*$/, "");
+}
