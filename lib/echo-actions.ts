@@ -1,7 +1,7 @@
 // echo 的「小动作」：模型在回复末尾写一行暗号，前端剥掉暗号并执行
 // [[echo:voice]] / [[echo:shot:mine|echo]] / [[echo:memory:kind|标题|内容]] / [[echo:file:名字]] + ```代码块```
 export type EchoAction =
-  | { kind: "voice" }
+  | { kind: "voice"; text?: string }
   | { kind: "shot"; who: "mine" | "echo"; count?: number }
   | { kind: "memory"; memKind: "scene" | "event" | "preference" | "persona"; title: string; text: string }
   | { kind: "file"; name: string; content: string }
@@ -32,7 +32,7 @@ export function parseEchoActions(raw: string): { text: string; actions: EchoActi
     const payload = (hit[2] || "").trim();
 
     if (kind === "voice") {
-      actions.push({ kind: "voice" });
+      actions.push({ kind: "voice", ...(payload ? { text: payload } : {}) });
       continue;
     }
     if (kind === "call") {

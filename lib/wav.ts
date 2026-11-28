@@ -169,17 +169,17 @@ export function stopPlaying() {
 
 const voiceCache = new Map<string, Blob>();
 
-export function cacheVoice(id: string, blob: Blob) {
-  voiceCache.set(id, blob);
+export function cacheVoice(id: string, blob: Blob, part = 0) {
+  voiceCache.set(`${id}:${part}`, blob);
   return blob;
 }
 
-export function getVoiceBlob(id: string): Blob | undefined {
-  return voiceCache.get(id);
+export function getVoiceBlob(id: string, part = 0): Blob | undefined {
+  return voiceCache.get(`${id}:${part}`) || (part === 0 ? voiceCache.get(id) : undefined);
 }
 
 export function dropVoice(id: string) {
-  voiceCache.delete(id);
+  for (const k of [...voiceCache.keys()]) if (k === id || k.startsWith(`${id}:`)) voiceCache.delete(k);
 }
 
 /** 量一段音频的时长（秒）；量不到就回 0，语音条不显示数字时长 */

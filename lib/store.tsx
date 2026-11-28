@@ -37,7 +37,7 @@ export type Msg = {
   files?: { name: string; chars: number; text: string }[];
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
   /** 语音条：这条回复带一条可反复播放的语音；音频在内存缓存（不落盘），刷新后需重新生成 */
-  voice?: { dur: number; pending?: boolean };
+  voice?: { dur: number; pending?: boolean; part?: number };
   /** 通话记录：聊天里显示「通话 3:12」，点开看文字 */
   call?: { dur: number; turns: { role: "user" | "echo"; text: string }[]; dir?: "in" | "out"; missed?: boolean };
 };
