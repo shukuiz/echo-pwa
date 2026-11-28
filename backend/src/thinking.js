@@ -134,14 +134,23 @@ export function planThinking(thinking, ctx) {
 }
 
 // ---------- <think> 拆分：标签可能被切在两段流里；回复可能一开头就是没闭合的 <think> ----------
-const OPEN = "<think>";
-const CLOSE = "</think>";
+const OPEN_TAGS = ["<think>", "<thinking>"];
+const CLOSE_TAGS = ["</think>", "</thinking>"];
 
 /** buf 末尾有多长可能是 tag 的开头（要先留着，等下一段再判断） */
 function partialTail(buf, tag) {
   const max = Math.min(buf.length, tag.length - 1);
   for (let n = max; n > 0; n--) if (tag.startsWith(buf.slice(-n))) return n;
   return 0;
+}
+
+function findTag(buf, tags) {
+  let found = -1, tag = "";
+  for (const candidate of tags) {
+    const i = buf.indexOf(candidate);
+    if (i !== -1 && (found === -1 || i < found)) { found = i; tag = candidate; }
+  }
+  return { index: found, tag };
 }
 
 export class ThinkSplitter {
@@ -165,25 +174,27 @@ export class ThinkSplitter {
           this.buf = "";
           break;
         }
-        const i = this.buf.indexOf(OPEN);
-        const j = this.buf.indexOf(CLOSE);
+        const open = findTag(this.buf, OPEN_TAGS);
+        const close = findTag(this.buf, CLOSE_TAGS);
+        const i = open.index;
+        const j = close.index;
         if (j !== -1 && (i === -1 || j < i)) {
           // 没有开头只有结尾的 </think>（有些网关会吞掉开头那个）：开头之前没发过正文就当思考
           const before = this.buf.slice(0, j);
           thought += before;
-          this.buf = this.buf.slice(j + CLOSE.length).replace(/^\s+/, "");
+          this.buf = this.buf.slice(j + close.tag.length).replace(/^\s+/, "");
           this.sawThink = true;
           continue;
         }
         if (i !== -1) {
           const before = this.buf.slice(0, i);
           if (this.started || before.trim()) { content += before; if (before.trim()) this.started = true; }
-          this.buf = this.buf.slice(i + OPEN.length);
+          this.buf = this.buf.slice(i + open.tag.length);
           this.inThink = true;
           this.sawThink = true;
           continue;
         }
-        const keep = Math.max(partialTail(this.buf, OPEN), partialTail(this.buf, CLOSE));
+        const keep = Math.max(...OPEN_TAGS.concat(CLOSE_TAGS).map((tag) => partialTail(this.buf, tag)));
         const out = this.buf.slice(0, this.buf.length - keep);
         if (out) {
           content += this.started ? out : out.replace(/^\s+/, "");
@@ -192,14 +203,15 @@ export class ThinkSplitter {
         this.buf = this.buf.slice(this.buf.length - keep);
         break;
       } else {
-        const j = this.buf.indexOf(CLOSE);
+        const close = findTag(this.buf, CLOSE_TAGS);
+        const j = close.index;
         if (j !== -1) {
           thought += this.buf.slice(0, j);
-          this.buf = this.buf.slice(j + CLOSE.length).replace(/^\s+/, "");
+          this.buf = this.buf.slice(j + close.tag.length).replace(/^\s+/, "");
           this.inThink = false;
           continue;
         }
-        const keep = partialTail(this.buf, CLOSE);
+        const keep = Math.max(...CLOSE_TAGS.map((tag) => partialTail(this.buf, tag)));
         thought += this.buf.slice(0, this.buf.length - keep);
         this.buf = this.buf.slice(this.buf.length - keep);
         break;
@@ -219,7 +231,7 @@ export class ThinkSplitter {
 /** 一整段文字里去掉 <think>…</think>（历史消息、旧数据里的思考不再发回给模型） */
 export function stripThink(text) {
   const s = String(text ?? "");
-  if (!s.includes("<think>") && !s.includes("</think>")) return s;
+  if (![...OPEN_TAGS, ...CLOSE_TAGS].some((tag) => s.includes(tag))) return s;
   const sp = new ThinkSplitter();
   const a = sp.push(s), b = sp.flush();
   return a.content + b.content;
