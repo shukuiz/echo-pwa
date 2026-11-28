@@ -4,13 +4,14 @@ export type EchoAction =
   | { kind: "voice" }
   | { kind: "shot"; who: "mine" | "echo"; count?: number }
   | { kind: "memory"; memKind: "scene" | "event" | "preference" | "persona"; title: string; text: string }
-  | { kind: "file"; name: string; content: string };
+  | { kind: "file"; name: string; content: string }
+  | { kind: "call" };
 
 const MEM_KINDS = ["scene", "event", "preference", "persona"] as const;
 type MemKind = (typeof MEM_KINDS)[number];
 const isMemKind = (v: string): v is MemKind => (MEM_KINDS as readonly string[]).includes(v);
 
-const MARK = /^[ \t]*\[\[echo:(voice|shot|memory|file)(?::([^\]]*))?\]\][ \t]*$/;
+const MARK = /^[ \t]*\[\[echo:(voice|shot|memory|file|call)(?::([^\]]*))?\]\][ \t]*$/;
 
 /** 解析回复里的小动作。没有暗号时原样返回，零副作用 */
 export function parseEchoActions(raw: string): { text: string; actions: EchoAction[] } {
@@ -32,6 +33,10 @@ export function parseEchoActions(raw: string): { text: string; actions: EchoActi
 
     if (kind === "voice") {
       actions.push({ kind: "voice" });
+      continue;
+    }
+    if (kind === "call") {
+      if (!actions.some((a) => a.kind === "call")) actions.push({ kind: "call" });
       continue;
     }
     if (kind === "shot") {
@@ -71,4 +76,21 @@ export function parseEchoActions(raw: string): { text: string; actions: EchoActi
     text: kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd(),
     actions,
   };
+}
+
+// echo 自己写的译文：[[tr:中文]] 紧跟在外语句子后面。显示在气泡下面、朗读时剥掉
+const TR_ALL = /\[\[tr:([^\]]*)\]\]/g;
+/** 去掉译文暗号（含流式时写到一半的） */
+export function stripTr(text: string): string {
+  return String(text ?? "").replace(TR_ALL, "").replace(/\[\[tr:[^\]]*$/, "").replace(/[ \t]+(\n|$)/g, "$1").trim();
+}
+/** 拆出正文和译文 */
+export function splitTr(text: string): { text: string; trs: string[] } {
+  const trs: string[] = [];
+  String(text ?? "").replace(TR_ALL, (_, t: string) => { if (t.trim()) trs.push(t.trim()); return ""; });
+  return { text: stripTr(text), trs };
+}
+/** 复制、截图时把译文写成括号 */
+export function inlineTr(text: string): string {
+  return String(text ?? "").replace(TR_ALL, (_, t: string) => (t.trim() ? `（${t.trim()}）` : "")).replace(/\[\[tr:[^\]]*$/, "");
 }

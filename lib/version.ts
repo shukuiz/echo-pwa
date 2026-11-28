@@ -1,11 +1,22 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
 
-export const APP_VERSION = "0.14.0";
+export const APP_VERSION = "0.14.1";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.14.1", date: "2026-11-28", title: "更好看了，它也会打给你 ✿",
+    items: [
+      { t: "顶栏更清爽", d: "电话和「换窗」合成一个玻璃胶囊" },
+      { t: "语音放进气泡里", d: "echo 的语音条装进它自己的气泡，波形只用你的重点色，长度跟着时长变；转出来的文字也在同一个气泡里" },
+      { t: "小按钮收进长按", d: "气泡下面不再挂小喇叭和「转语音」，长按一条消息就能朗读、转语音、转文字、重做语音" },
+      { t: "译文放到气泡下面", d: "echo 自己写的翻译也挪到气泡下面了，跟着「翻译显示」走；念语音时只念原文，不念译文" },
+      { t: "echo 会给你打电话", d: "它想你的时候会打过来，可以接也可以拒绝；聊天里留一张通话卡片：谁打给谁、多久、未接的可以点「回拨」" },
+      { t: "小细节", d: "没设头像时换成玻璃小圆；「思考过程」贴着思考卡；思考里的加粗不再露出星号" },
+    ],
+  },
   {
     version: "0.14.0", date: "2026-11-28", title: "能打电话了 ✿",
     items: [

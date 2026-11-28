@@ -253,7 +253,7 @@ export const api = {
 
   // 聊天历史
   getHistory: () => jsonFetch<{ messages: any[] }>("/api/chat/history"),
-  saveCallLog: (log: { id: string; text: string; dur: number; turns: { role: "user" | "echo"; text: string }[] }) =>
+  saveCallLog: (log: { id: string; text: string; dur: number; turns: { role: "user" | "echo"; text: string }[]; dir: "in" | "out"; missed?: boolean }) =>
     jsonFetch<{ ok: true; id: string }>("/api/chat/call-log", { method: "POST", body: JSON.stringify(log) }),
   chatStream,
   /** 进行中 / 刚结束的回复（回到聊天页时接上） */

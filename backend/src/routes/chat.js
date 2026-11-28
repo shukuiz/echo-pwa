@@ -96,7 +96,9 @@ export default async function chatRoute(app) {
     const text = String(b.text || "").slice(0, 40) || "通话";
     await mutateChat((chat) => {
       if (chat.messages.some((m) => m.id === id)) return false;
-      chat.messages.push({ id, role: "echo", text, call: { dur, turns }, at: Date.now(), status: "done" });
+      const dir = b.dir === "in" ? "in" : "out";
+      const missed = b.missed === true;
+      chat.messages.push({ id, role: dir === "out" ? "user" : "echo", text, call: { dur, turns, dir, ...(missed ? { missed } : {}) }, at: Date.now(), status: "done" });
     });
     reply.code(201);
     return { ok: true, id };

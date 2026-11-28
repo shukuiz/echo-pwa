@@ -1,6 +1,8 @@
 // 把一段聊天画成一张图（纯 canvas，不引第三方库）：相册里存的「聊天截图」就是它
 export type ShotMsg = { role: "user" | "echo"; text: string; at?: number };
 
+import { inlineTr } from "./echo-actions";
+
 const W = 750; // 画布宽（2x 屏，导出后看着清楚）
 const PAD = 40;
 const MAX_BUBBLE = 520;
@@ -28,7 +30,7 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): st
 
 /** 生成 PNG dataURL。messages 最多取最后 30 条，整图最高 4000px */
 export function renderChatShot(messages: ShotMsg[], opts: { title?: string } = {}): string {
-  const rows = messages.filter((m) => String(m.text || "").trim()).slice(-30);
+  const rows = messages.map((m) => ({ ...m, text: inlineTr(m.text) })).filter((m) => String(m.text || "").trim()).slice(-30);
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("画布不可用");

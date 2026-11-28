@@ -30,6 +30,8 @@ const PATHS: Record<string, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M6 12h12"/>',
   drop: '<path d="M12 3.5c3.5 4.2 6 7.6 6 10.7a6 6 0 0 1-12 0c0-3.1 2.5-6.5 6-10.7z"/><path d="M9.2 14.5a3 3 0 0 0 2.3 2.6"/>',
+  play: '<path d="M8 5.5v13l10.5-6.5z"/>',
+  mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>',
   phone: '<rect x="6.5" y="2.8" width="11" height="18.4" rx="3"/><path d="M10.5 18h3"/>',
   layers: '<path d="M12 4l8.5 4.5L12 13 3.5 8.5z"/><path d="M3.5 12.5L12 17l8.5-4.5M3.5 16.5L12 21l8.5-4.5"/>',
   type: '<path d="M5 6.5V5h14v1.5M12 5v14M9.5 19h5"/>',
