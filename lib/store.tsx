@@ -38,6 +38,8 @@ export type Msg = {
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
   /** 语音条：这条回复带一条可反复播放的语音；音频在内存缓存（不落盘），刷新后需重新生成 */
   voice?: { dur: number; pending?: boolean };
+  /** 通话记录：聊天里显示「通话 3:12」，点开看文字 */
+  call?: { dur: number; turns: { role: "user" | "echo"; text: string }[] };
 };
 
 export type FileKind = "worldbook" | "preset" | "miniapp" | "script";
@@ -219,6 +221,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             errorKind: typeof m.errorKind === "string" ? m.errorKind : undefined,
             errorMessage: typeof m.errorMessage === "string" ? m.errorMessage : undefined,
             status: (m.status === "streaming" ? "stopped" : m.status ?? "done") as Msg["status"],
+            call: m.call && typeof m.call === "object" && Array.isArray(m.call.turns) ? { dur: Number(m.call.dur) || 0, turns: m.call.turns } : undefined,
             at: m.at ?? Date.now(),
           })),
           memory: mem.memory || [],

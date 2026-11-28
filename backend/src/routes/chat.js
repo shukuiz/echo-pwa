@@ -10,7 +10,7 @@ import { isSereinGateway, isSwitching } from "../windows.js";
 import { planThinking, ThinkSplitter, stripThink, shouldRetryWithoutThinking } from "../thinking.js";
 import { codexBridge, gentleCodexError } from "../codex.js";
 import { getSkills } from "../skills.js";
-import { ECHO_ACTIONS_HINT } from "../echo-actions-hint.js";
+import { CALL_HINT, ECHO_ACTIONS_HINT } from "../echo-actions-hint.js";
 
 const MAX_HISTORY = 20;
 const MAX_DELETE = 500;
@@ -85,6 +85,23 @@ export default async function chatRoute(app) {
   // 读取历史聊天记录（供前端初始化）
   app.get("/api/chat/history", async () => readChat());
 
+  // 通话结束：聊天里只留一条「通话 3:12」，点开能看这次的文字记录
+  app.post("/api/chat/call-log", { bodyLimit: 256 * 1024 }, async (req, reply) => {
+    const b = req.body || {};
+    const id = clientId(b.id) || uid();
+    const dur = Math.max(0, Math.min(6 * 3600, Math.round(Number(b.dur) || 0)));
+    const turns = (Array.isArray(b.turns) ? b.turns : []).slice(0, 400)
+      .filter((t) => t && (t.role === "user" || t.role === "echo") && typeof t.text === "string")
+      .map((t) => ({ role: t.role, text: t.text.slice(0, 4000) }));
+    const text = String(b.text || "").slice(0, 40) || "通话";
+    await mutateChat((chat) => {
+      if (chat.messages.some((m) => m.id === id)) return false;
+      chat.messages.push({ id, role: "echo", text, call: { dur, turns }, at: Date.now(), status: "done" });
+    });
+    reply.code(201);
+    return { ok: true, id };
+  });
+
   // 进行中 / 刚结束的回复：前端回到聊天页、从后台切回来时按 genId 接上
   app.get("/api/chat/active", async (_req, reply) => {
     reply.header("Cache-Control", "no-store");
@@ -148,7 +165,7 @@ export default async function chatRoute(app) {
     const skillText = "\n\n她没选技能时，明显合适的话你也可以按某个技能的思路做，但不用说出来。\n【可用技能】\n" + availableSkills.map((s) => `· ${s.name}：${s.desc}`).join("\n") +
       `\n她有一个自己的相册（你看不到里面），也有一个你的相册。她刚截图或存图的时候你只知道「她刚截了图」，看不到图本身。` +
       (recentMine.length ? `\n她刚往相册里存了 ${recentMine.length} 张截图。` : "") +
-      ECHO_ACTIONS_HINT;
+      (body.call === true ? `\n\n${CALL_HINT}` : ECHO_ACTIONS_HINT);
     const structured = body.streamFormat === "ndjson";
     // 前端带上自己的消息 id，删除 / 重新生成时前后端才对得上；regenerate = 重新生成本轮，用户消息已在记录里
     const ids = body.ids && typeof body.ids === "object" ? body.ids : {};
@@ -201,7 +218,7 @@ export default async function chatRoute(app) {
     const messages = [{ role: "system", content: system }, ...history];
 
     // 落盘：保存这次的用户消息到聊天记录
-    await saveUserMessage({ incoming, userId, regenerate });
+    if (body.call !== true) await saveUserMessage({ incoming, userId, regenerate });
 
     const upstreamAbort = new AbortController();
     let gen;
@@ -392,7 +409,7 @@ export default async function chatRoute(app) {
       await patchActiveWindow((w) => ({ resume: { ...w.resume, pending: false, anchorText: resumeAnchor.text, anchorId: userId || "", resumedAt: Date.now() } })).catch(() => {});
     }
     // 落盘：先保存助手完整回复再结束响应，前端拿到「完成」后立刻删除 / 重新生成也对得上
-    await saveEchoMessage(gen, { status, error });
+    if (body.call !== true) await saveEchoMessage(gen, { status, error });
     gen.finish(status, error);
 
     if (error && !headersSent && live()) {
@@ -472,7 +489,8 @@ async function codexChat(req, reply, cfg) {
   const settings = cfg.codex || {};
   const showThinking = settings.showThinking !== false;
 
-  await saveUserMessage({ incoming, userId, regenerate });
+  const call = body.call === true;
+  if (!call) await saveUserMessage({ incoming, userId, regenerate });
 
   const win = await activeWindow().catch(() => null);
   const gen = generations().start({
@@ -515,7 +533,7 @@ async function codexChat(req, reply, cfg) {
   let result;
   try {
     result = await bridge.runTurn({
-      text: skillText + text, images, regenerate,
+      text: (call ? `【${CALL_HINT}这一轮不要写任何 [[echo:…]] 暗号。】\n` : "") + skillText + text, images, regenerate,
       cfg: { model: settings.model, effort: settings.effort, showThinking },
       handlers: {
         onContent: (t) => write("content", t),
@@ -540,7 +558,7 @@ async function codexChat(req, reply, cfg) {
   if (note && !error) write("note", note);
 
   const status = stopped ? "stopped" : error ? "error" : "done";
-  await saveEchoMessage(gen, { status, error });
+  if (!call) await saveEchoMessage(gen, { status, error });
   gen.finish(status, error);
 
   if (error && !headersSent && live()) {

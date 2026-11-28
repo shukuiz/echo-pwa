@@ -18,6 +18,7 @@ import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
 import { blobDuration, cacheVoice, getVoiceBlob, playBlob, seekVoice, startRecording, stopPlaying, unlockAudio, voicePlaybackState, type Recorder } from "@/lib/wav";
 import { renderChatShot } from "@/lib/shot";
+import CallScreen from "@/components/chat/CallScreen";
 import type { EchoAction } from "@/lib/echo-actions";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
@@ -144,10 +145,9 @@ function Chat() {
   const recRef = useRef<Recorder | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [speaking, setSpeaking] = useState<string | null>(null);
-  // 对讲机模式：按住说话松手直接发，echo 回复后自动朗读（不存语音条）
-  const [walkie, setWalkie] = useState(false);
-  const spokenRef = useRef<string | null>(null);
-  const autoSpeakErrorRef = useRef(false);
+  // 打电话：全屏通话页；callLog = 正在看的那次通话记录
+  const [calling, setCalling] = useState(false);
+  const [callLog, setCallLog] = useState<Msg["call"] | null>(null);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const [winTitle, setWinTitle] = useState("");
@@ -204,17 +204,6 @@ function Chat() {
   }, [messages]);
 
   useEffect(() => () => clearAll(), []);
-
-  // 对讲机：最后一条 echo 回复写完（done）就自动朗读，同一条只念一次
-  useEffect(() => {
-    if (!walkie) return;
-    const last = messages.at(-1);
-    if (last && last.role === "echo" && last.status === "done" && last.text && spokenRef.current !== last.id) {
-      spokenRef.current = last.id;
-      void autoSpeak(last);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, walkie]);
 
   // 回到聊天页、从后台切回来：接上后端还在写的回复（离开页面不会取消生成）
   useEffect(() => {
@@ -338,12 +327,7 @@ function Chat() {
     setTranscribing(true);
     try {
       const r = await api.transcribe(wav);
-      if (walkie) {
-        // 对讲机：松手就发，不用再点发送
-        if (r.text.trim()) sendText(r.text);
-      } else {
-        setInput((v) => (v ? `${v} ${r.text}` : r.text));
-      }
+      setInput((v) => (v ? `${v} ${r.text}` : r.text));
     } catch (e) {
       toast((e as Error).message || "没听清");
     } finally {
@@ -367,12 +351,7 @@ function Chat() {
   }
 
   /** 对讲机模式：echo 回复后自动念出来（临时朗读，不存语音条） */
-  async function autoSpeak(m: Msg) {
-    if (settings.mute || !m.text) return;
-    try { await playBlob(await api.speak(m.text.slice(0, 900))); } catch (e) {
-      if (!autoSpeakErrorRef.current) { autoSpeakErrorRef.current = true; toast((e as Error).message || "朗读失败"); }
-    }
-  }
+
 
   /** 把这条消息存成 .md 文件（浏览器直接下载，不经过服务器） */
   /** 截一张聊天图：one=只要这一条，n=从这条往前数 n 条 */
@@ -438,8 +417,7 @@ function Chat() {
     const { text, echoId } = ctx;
     for (const a of actions) {
       if (a.kind === "voice") {
-        // 对讲机模式会自动朗读整条回复，暗号语音就跳过，避免同一句念两遍
-        if (walkie || settings.mute || settings.proactiveVoice === false) continue;
+        if (settings.mute || settings.proactiveVoice === false) continue;
         void voiceToBar(echoId, text);
       } else if (a.kind === "shot") {
         // count = 这条回复连同之前一共几条；没写就截最近一段（之前 10 条 + 这条）
@@ -744,7 +722,7 @@ function Chat() {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
             }}
             rows={1}
-            placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : walkie ? "对讲机：按住麦克风说，松手就发" : "跟 echo 说点什么…"}
+            placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : "跟 echo 说点什么…"}
             className="ec-input block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
@@ -769,13 +747,13 @@ function Chat() {
               )}
             </div>
             <button
-              aria-label={walkie ? "对讲机：按住说，松手发" : "按住说话"}
+              aria-label="按住说话"
               onPointerDown={(e) => { e.preventDefault(); void beginRecord(); }}
               onPointerUp={() => void endRecord()}
               onPointerCancel={() => void endRecord(true)}
               onContextMenu={(e) => e.preventDefault()}
               disabled={transcribing || busy}
-              className={`ec-btn chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : walkie ? "bg-sakura/40 text-rose" : ""} disabled:opacity-50`}
+              className={`ec-btn chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : ""} disabled:opacity-50`}
             >
               {transcribing ? <span className="text-[11px]">听…</span> : <IconMic size={18} />}
             </button>
@@ -807,10 +785,16 @@ function Chat() {
       title={winTitle ? `echo · ${winTitle}` : "echo"}
       footer={selectBar || composer}
       right={
+        <>
+        <button type="button" className={`ec-nav-btn chip press ec-callbtn ${busy ? "opacity-50" : ""}`} aria-label="和 echo 打电话"
+          onClick={() => { if (busy) { toast("echo 还在回复，等这条说完再打"); return; } unlockAudio(); setCalling(true); }}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
+        </button>
         <Link href="/chat/window" className={`ec-nav-btn chip winbtn press ${busy ? "opacity-50" : ""}`} aria-label="换窗" aria-disabled={busy}
           onClick={(e) => { if (busy) { e.preventDefault(); toast("echo 还在回复，等这条说完再换窗"); } }}>
           <GIcon n="win" s={17} />换窗
         </Link>
+        </>
       }
       sub={
         <div className="relative flex items-center gap-2">
@@ -821,7 +805,6 @@ function Chat() {
             <div className="absolute right-0 top-full z-30 mt-2 w-[176px] rounded-[18px] bg-tile p-1 shadow-soft">
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">自动展开思考<span className={`relative h-[16px] w-[28px] rounded-capsule ${!quiet ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${!quiet ? "left-[14px]" : "left-[2px]"}`} /></span></button>
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, splitBubbles: !s.splitBubbles }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">分气泡<span className={`relative h-[16px] w-[28px] rounded-capsule ${settings.splitBubbles ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${settings.splitBubbles ? "left-[14px]" : "left-[2px]"}`} /></span></button>
-              <button type="button" onClick={() => { unlockAudio(); setWalkie((v) => !v); }} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">对讲机<span className={`relative h-[16px] w-[28px] rounded-capsule ${walkie ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${walkie ? "left-[14px]" : "left-[2px]"}`} /></span></button>
             </div>
           </>}
         </div>
@@ -875,7 +858,12 @@ function Chat() {
               </span>
             )}
             {showGroupTime && <div className="chat-group-time" aria-label="消息时间">{new Date(m.at).toDateString() === new Date(prev!.at).toDateString() ? fmtTime(m.at) : `${new Date(m.at).getMonth() + 1}月${new Date(m.at).getDate()}日 ${fmtTime(m.at)}`}</div>}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />
+            {m.call ? (
+              <button type="button" className="ec-callpill press" onClick={() => setCallLog(m.call!)} aria-label="看通话记录">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
+                {m.text}<span className="text-mute">  看记录</span>
+              </button>
+            ) : <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />}
           </div>
           );
         })}
@@ -966,6 +954,35 @@ function Chat() {
           </div>
         );
       })()}
+
+      {calling && (
+        <CallScreen
+          avatar={settings.avatarEcho}
+          history={messages.filter((m) => m.text && !m.call).slice(-16).map((m) => ({ role: m.role === "user" ? "user" : "echo", text: m.text }))}
+          toast={toast}
+          onEnd={({ dur, turns }) => {
+            setCalling(false);
+            if (!turns.length) return;
+            const id = uid();
+            const text = `通话 ${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, "0")}`;
+            set("messages", (ms) => [...ms, { id, role: "echo", text, call: { dur, turns }, at: Date.now(), status: "done" }]);
+            api.saveCallLog({ id, text, dur, turns }).catch(() => {});
+          }}
+        />
+      )}
+
+      {callLog && (
+        <>
+          <div className="gmask" onClick={() => setCallLog(null)} />
+          <div className="gsheet on" role="dialog" aria-label="通话记录">
+            <div className="grab" />
+            <div className="sh-h"><b>通话记录 · {Math.floor(callLog.dur / 60)}:{String(callLog.dur % 60).padStart(2, "0")}</b></div>
+            <div className="ec-calllog">
+              {callLog.turns.map((t, i) => <p key={i} className={t.role === "user" ? "me" : ""}><b>{t.role === "user" ? "我" : "echo"}</b>{t.text}</p>)}
+            </div>
+          </div>
+        </>
+      )}
 
       {shot && (
         <>

@@ -139,3 +139,13 @@ test("beauty backup stores newer settings only", async () => {
   assert.deepEqual((await app.inject({ method: "GET", url, headers })).json(), { beauty: { tint: "#bfe2ff" }, savedAt: 200 });
   assert.equal((await app.inject({ method: "PUT", url, headers, payload: { beauty: [], savedAt: 300 } })).statusCode, 400);
 });
+
+test("call turns use the short spoken hint and are not saved to history", async () => {
+  const before = (await history()).length;
+  const res = await chat({ messages: [{ role: "user", text: "喂" }], ids: { user: "cu1", echo: "ce1" }, call: true });
+  assert.equal(res.statusCode, 200, res.body);
+  const sys = upstreamCalls.at(-1).messages[0].content;
+  assert.match(sys, /现在是在打电话/);
+  assert.doesNotMatch(sys, /手上的小动作/);
+  assert.equal((await history()).length, before);
+});
