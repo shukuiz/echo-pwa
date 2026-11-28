@@ -1,11 +1,18 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
 
-export const APP_VERSION = "0.14.1";
+export const APP_VERSION = "0.14.2";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.14.2", date: "2026-11-28", title: "语音可以只念一句了",
+    items: [
+      { t: "语音可以只念一句", d: "拆成好几个气泡时，长按哪一个就只把那一个变成语音；echo 主动发语音也可以只念它想念的那一句" },
+      { t: "译文和语音不再失灵", d: "echo 的小动作说明更新后会自动接一个新对话（最近的聊天会带过去），译文、发语音、打电话这些新本事马上生效" },
+    ],
+  },
   {
     version: "0.14.1", date: "2026-11-28", title: "更好看了，它也会打给你 ✿",
     items: [

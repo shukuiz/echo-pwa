@@ -256,7 +256,8 @@ export class CodexBridge extends EventEmitter {
   }
 
   async agentsHash() {
-    return hashText(await readText(paths.agents(this.dataDir)));
+    const agents = await readText(paths.agents(this.dataDir));
+    return hashText(`${agents}\n${await codexDeveloperInstructions(this.dataDir)}`);
   }
 
   threadParams(cfg, developerInstructions) {

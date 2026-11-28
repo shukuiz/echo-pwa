@@ -22,7 +22,7 @@ import CallScreen, { IncomingCall } from "@/components/chat/CallScreen";
 import { inlineTr, splitTr, stripTr, type EchoAction } from "@/lib/echo-actions";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
-type Menu = { id: string; mine: boolean; rect: { top: number; left: number; width: number; height: number }; text: string; cls: string };
+type Menu = { id: string; part: number; mine: boolean; rect: { top: number; left: number; width: number; height: number }; text: string; cls: string };
 
 /** 把选中的图片压到长边 ≤1280、JPEG 0.78，返回 dataURL；手机大图直接发会卡、也容易超限 */
 function compressImage(file: File): Promise<string> {
@@ -409,15 +409,15 @@ function Chat() {
   }
 
   /** 合成一条语音并挂到消息上，变成可反复播放的语音条（音频只在内存，不落盘） */
-  async function voiceToBar(id: string, text: string) {
+  async function voiceToBar(id: string, text: string, part = 0) {
     const t = (text || "").trim();
     if (!t || settings.mute) return;
-    set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur: 0, pending: true } } : m)));
+    set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur: 0, pending: true, part } } : m)));
     try {
       const blob = await api.speak(stripTr(t).slice(0, 900));
       const dur = await blobDuration(blob);
-      cacheVoice(id, blob);
-      set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur, pending: false } } : m)));
+      cacheVoice(id, blob, part);
+      set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: { dur, pending: false, part } } : m)));
     } catch (e) {
       set("messages", (ms) => ms.map((m) => (m.id === id ? { ...m, voice: undefined } : m)));
       toast((e as Error).message || "语音没生成出来");
@@ -430,7 +430,10 @@ function Chat() {
     for (const a of actions) {
       if (a.kind === "voice") {
         if (settings.mute || settings.proactiveVoice === false) continue;
-        void voiceToBar(echoId, text);
+        const parts = bubbleParts(text);
+        const found = a.text ? parts.findIndex((p) => stripTr(p).includes(stripTr(a.text!))) : -1;
+        const part = found >= 0 ? found : parts.length - 1;
+        void voiceToBar(echoId, parts[part] || text, part);
       } else if (a.kind === "shot") {
         // count = 这条回复连同之前一共几条；没写就截最近一段（之前 10 条 + 这条）
         const before = a.count ? a.count - 1 : 10;
@@ -504,11 +507,14 @@ function Chat() {
     ok ? c.onOk() : c.onNo();
   }
 
+  /** 和气泡显示一致的拆分（没开拆气泡时整条算一个） */
+  const bubbleParts = (t: string) => (settings.splitBubbles ? splitTextIntoBubbles(t) : [t]);
+
   /** 长按（或桌面右键）气泡：弹出玻璃菜单 */
-  function openMenu(el: HTMLElement, m: Msg) {
+  function openMenu(el: HTMLElement, m: Msg, part = 0) {
     if (m.status === "streaming" || sel) return;
     const r = el.getBoundingClientRect();
-    setMenu({ id: m.id, mine: m.role === "user", rect: { top: r.top, left: r.left, width: r.width, height: r.height }, text: m.text, cls: el.className });
+    setMenu({ id: m.id, part, mine: m.role === "user", rect: { top: r.top, left: r.left, width: r.width, height: r.height }, text: m.text, cls: el.className });
   }
 
   const byIds = (ids: string[]) => messagesRef.current.filter((m) => ids.includes(m.id));
@@ -888,7 +894,7 @@ function Chat() {
                   {m.call.missed && <span className="ec-callback">回拨</span>}
                 </button>
               </div>
-            ) : <Bubble voiceTextOpen={voiceText.includes(m.id)} m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />}
+            ) : <Bubble voiceTextOpen={voiceText.includes(`${m.id}:${m.voice?.part ?? 0}`)} m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => { const part = mm.voice?.part ?? 0; void voiceToBar(mm.id, bubbleParts(mm.text)[part] || mm.text, part); }} toast={toast} groupFirst={groupFirst} />}
           </div>
           );
         })}
@@ -959,12 +965,13 @@ function Chat() {
             const mm = messages.find((x) => x.id === menu.id);
             if (!mm || mm.role === "user" || !mm.text || mm.status === "streaming") return [];
             const out: [string, string, () => void][] = [];
-            if (mm.voice) {
-              out.push(["type", voiceText.includes(mm.id) ? "收起文字" : "转文字", () => setVoiceText((v) => v.includes(mm.id) ? v.filter((x) => x !== mm.id) : [...v, mm.id])]);
-              out.push(["retry", "重做语音", () => void voiceToBar(mm.id, mm.text)]);
+            const voicePart = mm.voice?.part ?? 0;
+            if (mm.voice && voicePart === menu.part) {
+              out.push(["type", voiceText.includes(`${mm.id}:${menu.part}`) ? "收起文字" : "转文字", () => setVoiceText((v) => v.includes(`${mm.id}:${menu.part}`) ? v.filter((x) => x !== `${mm.id}:${menu.part}`)  : [...v, `${mm.id}:${menu.part}`])]);
+              out.push(["retry", "重做语音", () => void voiceToBar(mm.id, bubbleParts(mm.text)[menu.part] || mm.text, menu.part)]);
             } else {
-              out.push(["play", speaking === mm.id ? "停止朗读" : "朗读", () => void speak(mm)]);
-              out.push(["mic", "转语音", () => void voiceToBar(mm.id, mm.text)]);
+              out.push(["play", speaking === mm.id ? "停止朗读" : "朗读", () => void speak({ ...mm, text: bubbleParts(mm.text)[menu.part] || mm.text })]);
+              out.push(["mic", "转语音", () => void voiceToBar(mm.id, bubbleParts(mm.text)[menu.part] || mm.text, menu.part)]);
             }
             return out;
           })(),
@@ -1089,13 +1096,13 @@ function Avatar({ mine = false, hidden = false }: { mine?: boolean; hidden?: boo
 const voicePeaks = new Map<string, number[]>();
 const fallbackPeaks = (id: string) => Array.from({ length: 28 }, (_, i) => 5 + ((id.charCodeAt(i % id.length) * 17 + i * 29) % 15));
 
-function VoiceBar({ m, onRegen, toast, textOpen, press }: { m: Msg; onRegen: (m: Msg) => void; toast: (message: string) => void; textOpen: boolean; press: Record<string, unknown> }) {
+function VoiceBar({ m, text, part = 0, onRegen, toast, textOpen, press }: { m: Msg; text: string; part?: number; onRegen: (m: Msg) => void; toast: (message: string) => void; textOpen: boolean; press: Record<string, unknown> }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [peaks, setPeaks] = useState(() => voicePeaks.get(m.id) || fallbackPeaks(m.id));
-  const blob = getVoiceBlob(m.id);
+  const [peaks, setPeaks] = useState(() => voicePeaks.get(`${m.id}:${part}`) || fallbackPeaks(`${m.id}:${part}`));
+  const blob = getVoiceBlob(m.id, part);
   useEffect(() => {
-    if (!blob || voicePeaks.has(m.id)) return;
+    if (!blob || voicePeaks.has(`${m.id}:${part}`)) return;
     let live = true;
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctx();
@@ -1106,11 +1113,11 @@ function VoiceBar({ m, onRegen, toast, textOpen, press }: { m: Msg; onRegen: (m:
         return peak;
       });
       const max = Math.max(...out, 0.01); const normalized = out.map((v) => Math.max(5, Math.round(5 + v / max * 17)));
-      voicePeaks.set(m.id, normalized); if (live) setPeaks(normalized);
+      voicePeaks.set(`${m.id}:${part}`, normalized); if (live) setPeaks(normalized);
       void ctx.close().catch(() => {});
     }).catch(() => { void ctx.close().catch(() => {}); });
     return () => { live = false; };
-  }, [blob, m.id]);
+  }, [blob, m.id, part]);
   useEffect(() => {
     if (!playing) return;
     let frame = 0;
@@ -1151,7 +1158,7 @@ function VoiceBar({ m, onRegen, toast, textOpen, press }: { m: Msg; onRegen: (m:
         </button>
         <span className="voice-dur">{dur ? fmtDur(dur * 1000) : "语音"}</span>
       </div>
-      {textOpen && m.text && <div className="voice-text">{stripTr(m.text)}{splitTr(m.text).trs.map((t, i) => <div key={i} className="voice-tr">{t}</div>)}</div>}
+      {textOpen && text && <div className="voice-text">{stripTr(text)}{splitTr(text).trs.map((t, i) => <div key={i} className="voice-tr">{t}</div>)}</div>}
     </div>
   );
 }
@@ -1274,11 +1281,11 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast, groupFirst }: { voiceTextOpen: boolean; m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void; groupFirst: boolean }) {
+function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast, groupFirst }: { voiceTextOpen: boolean; m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg, part?: number) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void; groupFirst: boolean }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!(m.images && m.images.length);
-  const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
+  const press = useLongPress((el) => onMenu(el, m, Number(el.closest<HTMLElement>("[data-part]")?.dataset.part || 0)), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} translate={translateThink} />
     : !mine && m.think ? <ThinkLine think={m.think} defaultOpen={!quiet} translate={translateThink} />
     : null;
@@ -1334,11 +1341,12 @@ function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateTh
             ))}
           </div>
         )}
-        {!(!mine && m.voice) && <div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
+        {<div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
           {parts.map((p, i) => { const trs = mine ? [] : splitTr(p).trs; return (
             <Fragment key={i}>
-            <div
-              {...(i === 0 ? press : {})}
+            {!mine && m.voice && (m.voice.part ?? 0) === i ? <VoiceBar m={m} text={p} part={i} onRegen={onVoice} toast={toast} textOpen={voiceTextOpen} press={{ ...press, "data-part": i } as unknown as Record<string, unknown>} /> : <div
+              {...press}
+              data-part={i}
               data-cssg
               data-who={mine ? "me" : "ai"}
               data-hue={mine ? "me" : undefined}
@@ -1348,7 +1356,7 @@ function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateTh
             >
               {splitTr(p).text}
               {m.status === "streaming" && i === parts.length - 1 && <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-rose" />}
-            </div>
+            </div>}
             {trs.length > 0 && translateShow !== "off" && (
               translateShow === "tap" && !showTranslation
                 ? <button type="button" onClick={() => setShowTranslation(true)} className="ec-tr block min-h-11 px-2 text-left text-[13px] text-mute" data-onwp>看翻译</button>
@@ -1358,7 +1366,6 @@ function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateTh
           ); })}
         </div>}
         {mine && <div className="clear-both" />}
-        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} textOpen={voiceTextOpen} press={press as unknown as Record<string, unknown>} />}
         {translation && translateShow !== "off" && (
           translateShow === "tap" && !showTranslation ? (
             <button type="button" onClick={() => setShowTranslation(true)} className="mt-1 min-h-11 px-2 text-left text-[13px] text-mute">看翻译</button>
