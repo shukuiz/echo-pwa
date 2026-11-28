@@ -191,6 +191,8 @@ export async function chatStream(
     regenerate?: boolean;
     /** 这次生成的请求 ID：断开连接后端也不取消，回来按它接上；只更新带这个 ID 的消息 */
     genId?: string; skillIds?: string[];
+    /** 打电话：后端回短句口语、不带小动作、不存进聊天记录 */
+    call?: boolean;
   }
 ): Promise<void> {
   let res: Response;
@@ -198,7 +200,7 @@ export async function chatStream(
     res = await fetch(`${API_BASE}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined, genId: opts.genId, skillIds: opts.skillIds }),
+      body: JSON.stringify({ messages, model: opts.model, streamFormat: "ndjson", ids: opts.ids, regenerate: opts.regenerate || undefined, genId: opts.genId, skillIds: opts.skillIds, call: opts.call || undefined }),
       signal: opts.signal,
     });
   } catch (e) {
@@ -251,6 +253,8 @@ export const api = {
 
   // 聊天历史
   getHistory: () => jsonFetch<{ messages: any[] }>("/api/chat/history"),
+  saveCallLog: (log: { id: string; text: string; dur: number; turns: { role: "user" | "echo"; text: string }[] }) =>
+    jsonFetch<{ ok: true; id: string }>("/api/chat/call-log", { method: "POST", body: JSON.stringify(log) }),
   chatStream,
   /** 进行中 / 刚结束的回复（回到聊天页时接上） */
   chatActive: () => jsonFetch<{ generations: GenSnapshot[] }>("/api/chat/active", { cache: "no-store" }),

@@ -10,7 +10,10 @@ export const paths = {
   memory: (d) => path.join(d, "memory"),
   store: (d) => path.join(d, "memory", "store.json"), // 结构化记忆唯一数据源
   chat: (d) => path.join(d, "memory", "chat.json"), // 聊天记录
-  favorites: (d) => path.join(d, "memory", "favorites.json"), // 收藏本
+  favorites: (d) => path.join(d, "memory", "favorites.json"),
+  albumDir: (d) => path.join(d, "album"),
+  albumIndex: (d) => path.join(d, "album", "index.json"),
+  skills: (d) => path.join(d, "memory", "skills.json"), // 收藏本
   beauty: (d) => path.join(d, "memory", "beauty.json"), // 美化设置的云端备份（不含图片）
   aboutYou: (d) => path.join(d, "memory", "about-you.md"),
   aboutUs: (d) => path.join(d, "memory", "about-us.md"),
@@ -70,6 +73,8 @@ async function writeIfMissing(file, content) {
 
 /** 启动时确保目录结构与默认文件存在（不覆盖已有内容） */
 export async function ensureDataTree(dataDir) {
+  await fs.mkdir(paths.albumDir(dataDir), { recursive: true });
+  await fs.mkdir(path.join(paths.albumDir(dataDir), "files"), { recursive: true });
   await fs.mkdir(paths.diary(dataDir), { recursive: true });
   await fs.mkdir(paths.files(dataDir), { recursive: true });
   await fs.mkdir(paths.settings(dataDir), { recursive: true });
@@ -81,6 +86,7 @@ export async function ensureDataTree(dataDir) {
   await writeIfMissing(paths.today(dataDir), DEFAULT_TODAY);
   await writeIfMissing(paths.store(dataDir), JSON.stringify(DEFAULT_STORE, null, 2));
   await writeIfMissing(paths.filesIndex(dataDir), JSON.stringify([], null, 2));
+  await writeIfMissing(paths.albumIndex(dataDir), JSON.stringify({ items: [] }, null, 2));
   // 初始种子：echo 人设 + 一条示例偏好，方便改一条记忆立即生效的验收
   const store = await readJSON(paths.store(dataDir), DEFAULT_STORE);
   if (!store.memory || store.memory.length === 0) {

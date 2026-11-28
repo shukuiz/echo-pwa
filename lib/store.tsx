@@ -38,6 +38,8 @@ export type Msg = {
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
   /** 语音条：这条回复带一条可反复播放的语音；音频在内存缓存（不落盘），刷新后需重新生成 */
   voice?: { dur: number; pending?: boolean };
+  /** 通话记录：聊天里显示「通话 3:12」，点开看文字 */
+  call?: { dur: number; turns: { role: "user" | "echo"; text: string }[] };
 };
 
 export type FileKind = "worldbook" | "preset" | "miniapp" | "script";
@@ -85,6 +87,7 @@ export type Settings = {
   splitBubbles: boolean;
   /** 展开思考框时自动把英文思考翻成中文（免费接口，失败就显示原文） */
   thinkTranslate: boolean;
+  translateShow: "below" | "tap" | "off";
   mute: boolean;
   /** 让 echo 偶尔主动发语音（暗号 [[echo:voice]]） */
   proactiveVoice: boolean;
@@ -126,6 +129,7 @@ const defaultState: State = {
     showStatusBar: true,
     splitBubbles: true,
     thinkTranslate: true,
+    translateShow: "below",
     mute: false,
     proactiveVoice: true,
     tools: { translate: true, media: true, worldbook: true, miniapp: true, script: true },
@@ -217,6 +221,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             errorKind: typeof m.errorKind === "string" ? m.errorKind : undefined,
             errorMessage: typeof m.errorMessage === "string" ? m.errorMessage : undefined,
             status: (m.status === "streaming" ? "stopped" : m.status ?? "done") as Msg["status"],
+            call: m.call && typeof m.call === "object" && Array.isArray(m.call.turns) ? { dur: Number(m.call.dur) || 0, turns: m.call.turns } : undefined,
             at: m.at ?? Date.now(),
           })),
           memory: mem.memory || [],
@@ -253,6 +258,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           quietThink: prev.settings.quietThink,
           showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
           splitBubbles: prev.settings.splitBubbles,
+          translateShow: cfg.translateShow === "tap" || cfg.translateShow === "off" ? cfg.translateShow : "below",
           mute: cfg.mute ?? prev.settings.mute,
           tools: cfg.tools ?? prev.settings.tools,
         },

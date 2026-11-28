@@ -2,7 +2,7 @@
 // [[echo:voice]] / [[echo:shot:mine|echo]] / [[echo:memory:kind|标题|内容]] / [[echo:file:名字]] + ```代码块```
 export type EchoAction =
   | { kind: "voice" }
-  | { kind: "shot"; who: "mine" | "echo" }
+  | { kind: "shot"; who: "mine" | "echo"; count?: number }
   | { kind: "memory"; memKind: "scene" | "event" | "preference" | "persona"; title: string; text: string }
   | { kind: "file"; name: string; content: string };
 
@@ -35,7 +35,11 @@ export function parseEchoActions(raw: string): { text: string; actions: EchoActi
       continue;
     }
     if (kind === "shot") {
-      actions.push({ kind: "shot", who: payload === "mine" ? "mine" : "echo" });
+      const [rawWho, rawCount] = payload.split(":");
+      const who = rawWho.trim() === "mine" ? "mine" : "echo";
+      const parsedCount = rawCount === undefined ? undefined : Number.parseInt(rawCount.trim(), 10);
+      const count = Number.isInteger(parsedCount) ? Math.max(1, Math.min(30, parsedCount as number)) : undefined;
+      actions.push({ kind: "shot", who, ...(count === undefined ? {} : { count }) });
       continue;
     }
     if (kind === "memory") {

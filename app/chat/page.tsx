@@ -16,8 +16,9 @@ import { refreshLive, resumeGenerations, startGeneration, stopGeneration, useLiv
 import { addFavorite } from "@/lib/favorites";
 import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
-import { blobDuration, cacheVoice, getVoiceBlob, playBlob, startRecording, stopPlaying, unlockAudio, type Recorder } from "@/lib/wav";
+import { blobDuration, cacheVoice, getVoiceBlob, playBlob, seekVoice, startRecording, stopPlaying, unlockAudio, voicePlaybackState, type Recorder } from "@/lib/wav";
 import { renderChatShot } from "@/lib/shot";
+import CallScreen from "@/components/chat/CallScreen";
 import type { EchoAction } from "@/lib/echo-actions";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
@@ -134,7 +135,7 @@ function Chat() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachMenu, setAttachMenu] = useState(false);
   // 截图：先选范围，再预览，最后选存哪本相册
-  const [shot, setShot] = useState<{ id: string; img?: string } | null>(null);
+  const [shot, setShot] = useState<{ id: string; img?: string; multi?: boolean } | null>(null);
   const [skills, setSkills] = useState<any[]>([]);
   const [skillId, setSkillId] = useState<string | null>(null);
   useEffect(() => { api.getSkills().then(x => setSkills(x.skills)).catch(() => {}); }, []);
@@ -144,10 +145,9 @@ function Chat() {
   const recRef = useRef<Recorder | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [speaking, setSpeaking] = useState<string | null>(null);
-  // 对讲机模式：按住说话松手直接发，echo 回复后自动朗读（不存语音条）
-  const [walkie, setWalkie] = useState(false);
-  const spokenRef = useRef<string | null>(null);
-  const autoSpeakErrorRef = useRef(false);
+  // 打电话：全屏通话页；callLog = 正在看的那次通话记录
+  const [calling, setCalling] = useState(false);
+  const [callLog, setCallLog] = useState<Msg["call"] | null>(null);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const [winTitle, setWinTitle] = useState("");
@@ -204,17 +204,6 @@ function Chat() {
   }, [messages]);
 
   useEffect(() => () => clearAll(), []);
-
-  // 对讲机：最后一条 echo 回复写完（done）就自动朗读，同一条只念一次
-  useEffect(() => {
-    if (!walkie) return;
-    const last = messages.at(-1);
-    if (last && last.role === "echo" && last.status === "done" && last.text && spokenRef.current !== last.id) {
-      spokenRef.current = last.id;
-      void autoSpeak(last);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, walkie]);
 
   // 回到聊天页、从后台切回来：接上后端还在写的回复（离开页面不会取消生成）
   useEffect(() => {
@@ -338,12 +327,7 @@ function Chat() {
     setTranscribing(true);
     try {
       const r = await api.transcribe(wav);
-      if (walkie) {
-        // 对讲机：松手就发，不用再点发送
-        if (r.text.trim()) sendText(r.text);
-      } else {
-        setInput((v) => (v ? `${v} ${r.text}` : r.text));
-      }
+      setInput((v) => (v ? `${v} ${r.text}` : r.text));
     } catch (e) {
       toast((e as Error).message || "没听清");
     } finally {
@@ -367,12 +351,7 @@ function Chat() {
   }
 
   /** 对讲机模式：echo 回复后自动念出来（临时朗读，不存语音条） */
-  async function autoSpeak(m: Msg) {
-    if (settings.mute || !m.text) return;
-    try { await playBlob(await api.speak(m.text.slice(0, 900))); } catch (e) {
-      if (!autoSpeakErrorRef.current) { autoSpeakErrorRef.current = true; toast((e as Error).message || "朗读失败"); }
-    }
-  }
+
 
   /** 把这条消息存成 .md 文件（浏览器直接下载，不经过服务器） */
   /** 截一张聊天图：one=只要这一条，n=从这条往前数 n 条 */
@@ -385,6 +364,21 @@ function Chat() {
       .map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || (m.images?.length ? "（发了图片）" : "（发了文件）") }));
     try {
       setShot({ id, img: renderChatShot(rows) });
+    } catch {
+      toast("这张没画出来，再试一次");
+    }
+  }
+
+  /** 多选截图：按聊天里的先后顺序截勾选的那几条 */
+  function shotFromIds(ids: string[]) {
+    const set_ = new Set(ids);
+    const rows = messages
+      .filter((m) => set_.has(m.id) && ((m.text || "").trim() || m.images?.length || m.files?.length))
+      .map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || (m.images?.length ? "（发了图片）" : "（发了文件）") }));
+    if (!rows.length) return;
+    try {
+      setShot({ id: ids[ids.length - 1], img: renderChatShot(rows), multi: true });
+      setSel(null); setAnchor(null);
     } catch {
       toast("这张没画出来，再试一次");
     }
@@ -423,11 +417,12 @@ function Chat() {
     const { text, echoId } = ctx;
     for (const a of actions) {
       if (a.kind === "voice") {
-        // 对讲机模式会自动朗读整条回复，暗号语音就跳过，避免同一句念两遍
-        if (walkie || settings.mute || settings.proactiveVoice === false) continue;
+        if (settings.mute || settings.proactiveVoice === false) continue;
         void voiceToBar(echoId, text);
       } else if (a.kind === "shot") {
-        const rows = messages.slice(-10).map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || "" }));
+        // count = 这条回复连同之前一共几条；没写就截最近一段（之前 10 条 + 这条）
+        const before = a.count ? a.count - 1 : 10;
+        const rows = (before > 0 ? messages.filter((m) => m.id !== echoId).slice(-before) : []).map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || "" }));
         try {
           const img = renderChatShot([...rows, { role: "echo", text }]);
           albumSave({ who: a.who, dataUrl: img, title: "聊天截图", source: "chat-shot" })
@@ -643,6 +638,7 @@ function Chat() {
           <button disabled={!picked.length} onClick={() => setAskDel(picked)} className="danger"><GIcon n="trash" s={20} />删除</button>
           <button disabled={!picked.length} onClick={() => favorite(picked)}><GIcon n="heart" s={20} />收藏</button>
           <button disabled={!picked.length} onClick={() => remember(picked)}><GIcon n="brain" s={20} />记住</button>
+          <button disabled={!picked.length} onClick={() => shotFromIds(picked)}><GIcon n="image" s={20} />截成图</button>
         </div>
       </div>
     </div>
@@ -726,7 +722,7 @@ function Chat() {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
             }}
             rows={1}
-            placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : walkie ? "对讲机：按住麦克风说，松手就发" : "跟 echo 说点什么…"}
+            placeholder={confirm ? "请先在上方确认…" : recording ? "正在听…" : transcribing ? "正在认字…" : "跟 echo 说点什么…"}
             className="ec-input block max-h-32 min-h-[38px] w-full resize-none bg-transparent px-1.5 py-1.5 text-input text-[color:var(--g-ink)] outline-none placeholder:text-[color:var(--g-mute)]"
           />
           <div className="mt-0.5 flex items-center gap-1.5">
@@ -751,13 +747,13 @@ function Chat() {
               )}
             </div>
             <button
-              aria-label={walkie ? "对讲机：按住说，松手发" : "按住说话"}
+              aria-label="按住说话"
               onPointerDown={(e) => { e.preventDefault(); void beginRecord(); }}
               onPointerUp={() => void endRecord()}
               onPointerCancel={() => void endRecord(true)}
               onContextMenu={(e) => e.preventDefault()}
               disabled={transcribing || busy}
-              className={`ec-btn chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : walkie ? "bg-sakura/40 text-rose" : ""} disabled:opacity-50`}
+              className={`ec-btn chip press grid h-9 w-9 shrink-0 touch-none place-items-center rounded-full ${recording ? "bg-rose text-white" : ""} disabled:opacity-50`}
             >
               {transcribing ? <span className="text-[11px]">听…</span> : <IconMic size={18} />}
             </button>
@@ -789,10 +785,16 @@ function Chat() {
       title={winTitle ? `echo · ${winTitle}` : "echo"}
       footer={selectBar || composer}
       right={
+        <>
+        <button type="button" className={`ec-nav-btn chip press ec-callbtn ${busy ? "opacity-50" : ""}`} aria-label="和 echo 打电话"
+          onClick={() => { if (busy) { toast("echo 还在回复，等这条说完再打"); return; } unlockAudio(); setCalling(true); }}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
+        </button>
         <Link href="/chat/window" className={`ec-nav-btn chip winbtn press ${busy ? "opacity-50" : ""}`} aria-label="换窗" aria-disabled={busy}
           onClick={(e) => { if (busy) { e.preventDefault(); toast("echo 还在回复，等这条说完再换窗"); } }}>
           <GIcon n="win" s={17} />换窗
         </Link>
+        </>
       }
       sub={
         <div className="relative flex items-center gap-2">
@@ -803,7 +805,6 @@ function Chat() {
             <div className="absolute right-0 top-full z-30 mt-2 w-[176px] rounded-[18px] bg-tile p-1 shadow-soft">
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">自动展开思考<span className={`relative h-[16px] w-[28px] rounded-capsule ${!quiet ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${!quiet ? "left-[14px]" : "left-[2px]"}`} /></span></button>
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, splitBubbles: !s.splitBubbles }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">分气泡<span className={`relative h-[16px] w-[28px] rounded-capsule ${settings.splitBubbles ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${settings.splitBubbles ? "left-[14px]" : "left-[2px]"}`} /></span></button>
-              <button type="button" onClick={() => { unlockAudio(); setWalkie((v) => !v); }} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">对讲机<span className={`relative h-[16px] w-[28px] rounded-capsule ${walkie ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${walkie ? "left-[14px]" : "left-[2px]"}`} /></span></button>
             </div>
           </>}
         </div>
@@ -842,7 +843,12 @@ function Chat() {
         {messages.length === 0 && (
           <p className="ec-empty pt-20 text-center" data-onwp>和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
         )}
-        {messages.map((m) => (
+        {messages.map((m, index) => {
+          const prev = messages[index - 1];
+          const sameGroup = !!prev && prev.role === m.role && m.at - prev.at <= 5 * 60 * 1000;
+          const groupFirst = !sameGroup;
+          const showGroupTime = groupFirst && !!prev && m.at - prev.at > 5 * 60 * 1000;
+          return (
           <div key={m.id} id={"msg-" + m.id} data-who={m.role === "user" ? "me" : "ai"} data-status={m.status ?? "done"}
             className={`msgrow ec-msg ${sel ? "selecting" : ""} ${sel?.includes(m.id) ? "picked" : ""}`}
             onClick={sel && selectable(m) ? () => toggle(m.id) : undefined}>
@@ -851,9 +857,16 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} />
+            {showGroupTime && <div className="chat-group-time" aria-label="消息时间">{new Date(m.at).toDateString() === new Date(prev!.at).toDateString() ? fmtTime(m.at) : `${new Date(m.at).getMonth() + 1}月${new Date(m.at).getDate()}日 ${fmtTime(m.at)}`}</div>}
+            {m.call ? (
+              <button type="button" className="ec-callpill press" onClick={() => setCallLog(m.call!)} aria-label="看通话记录">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
+                {m.text}<span className="text-mute">  看记录</span>
+              </button>
+            ) : <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />}
           </div>
-        ))}
+          );
+        })}
         {working && (
           <div className="flex items-center gap-2 pt-2 animate-rise">
             <Avatar />
@@ -942,6 +955,35 @@ function Chat() {
         );
       })()}
 
+      {calling && (
+        <CallScreen
+          avatar={settings.avatarEcho}
+          history={messages.filter((m) => m.text && !m.call).slice(-16).map((m) => ({ role: m.role === "user" ? "user" : "echo", text: m.text }))}
+          toast={toast}
+          onEnd={({ dur, turns }) => {
+            setCalling(false);
+            if (!turns.length) return;
+            const id = uid();
+            const text = `通话 ${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, "0")}`;
+            set("messages", (ms) => [...ms, { id, role: "echo", text, call: { dur, turns }, at: Date.now(), status: "done" }]);
+            api.saveCallLog({ id, text, dur, turns }).catch(() => {});
+          }}
+        />
+      )}
+
+      {callLog && (
+        <>
+          <div className="gmask" onClick={() => setCallLog(null)} />
+          <div className="gsheet on" role="dialog" aria-label="通话记录">
+            <div className="grab" />
+            <div className="sh-h"><b>通话记录 · {Math.floor(callLog.dur / 60)}:{String(callLog.dur % 60).padStart(2, "0")}</b></div>
+            <div className="ec-calllog">
+              {callLog.turns.map((t, i) => <p key={i} className={t.role === "user" ? "me" : ""}><b>{t.role === "user" ? "我" : "echo"}</b>{t.text}</p>)}
+            </div>
+          </div>
+        </>
+      )}
+
       {shot && (
         <>
           <div className="gmask" onClick={() => setShot(null)} />
@@ -955,7 +997,7 @@ function Chat() {
                 <div className="addl">
                   <button className="gbtn" onClick={() => saveShot("mine")}>我的相册</button>
                   <button className="gbtn" onClick={() => saveShot("echo")}>echo 的相册</button>
-                  <button className="gbtn" onClick={() => buildShot(shot.id, 10)}>换个范围</button>
+                  {!shot.multi && <button className="gbtn" onClick={() => buildShot(shot.id, 10)}>换个范围</button>}
                 </div>
               </>
             ) : (
@@ -987,28 +1029,52 @@ function Chat() {
   );
 }
 
-function Avatar({ mine = false }: { mine?: boolean }) {
+function Avatar({ mine = false, hidden = false }: { mine?: boolean; hidden?: boolean }) {
   const { settings } = useStore();
   const src = mine ? settings.avatarMe : settings.avatarEcho;
-  if (src) return <img src={src} alt={mine ? "我" : "echo"} className="h-8 w-8 shrink-0 self-end rounded-full object-cover" />;
-  if (mine) return null; // 我没设头像就不占位，气泡保持靠右紧凑
+  if (src) return <img src={src} alt={mine ? "我" : "echo"} className={`ec-avatar h-9 w-9 shrink-0 self-start rounded-full object-cover ${hidden ? "invisible" : ""}`} />;
   return (
-    <span className="ec-avatar grid h-8 w-8 shrink-0 place-items-center self-end rounded-full bg-sakura/40 text-rose">
+    <span className={`ec-avatar grid h-9 w-9 shrink-0 place-items-center self-start rounded-full bg-sakura/40 text-rose ${hidden ? "invisible" : ""}`}>
       <IconStar size={16} />
     </span>
   );
 }
 
 /** 语音条：一条可反复播放的语音；音频在内存里，刷新后失效可重新生成 */
-function VoiceBar({ m, onRegen, toast }: { m: Msg; onRegen: (m: Msg) => void; toast: (message: string) => void }) {
+const voicePeaks = new Map<string, number[]>();
+const fallbackPeaks = (id: string) => Array.from({ length: 28 }, (_, i) => 5 + ((id.charCodeAt(i % id.length) * 17 + i * 29) % 15));
+
+function VoiceBar({ m, onRegen, toast, textOpen, onTextToggle }: { m: Msg; onRegen: (m: Msg) => void; toast: (message: string) => void; textOpen: boolean; onTextToggle: () => void }) {
   const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [peaks, setPeaks] = useState(() => voicePeaks.get(m.id) || fallbackPeaks(m.id));
   const blob = getVoiceBlob(m.id);
+  useEffect(() => {
+    if (!blob || voicePeaks.has(m.id)) return;
+    let live = true;
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    void blob.arrayBuffer().then((data) => ctx.decodeAudioData(data)).then((buffer) => {
+      const channel = buffer.getChannelData(0); const out = Array.from({ length: 28 }, (_, i) => {
+        const from = Math.floor(i * channel.length / 28), to = Math.max(from + 1, Math.floor((i + 1) * channel.length / 28));
+        let peak = 0; for (let j = from; j < to; j++) peak = Math.max(peak, Math.abs(channel[j]));
+        return peak;
+      });
+      const max = Math.max(...out, 0.01); const normalized = out.map((v) => Math.max(5, Math.round(5 + v / max * 17)));
+      voicePeaks.set(m.id, normalized); if (live) setPeaks(normalized);
+      void ctx.close().catch(() => {});
+    }).catch(() => { void ctx.close().catch(() => {}); });
+    return () => { live = false; };
+  }, [blob, m.id]);
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    const tick = () => { const s = voicePlaybackState(); setProgress(s.duration ? s.currentTime / s.duration : 0); frame = requestAnimationFrame(tick); };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing]);
   if (m.voice?.pending) {
-    return (
-      <div className="mt-1.5 flex items-center gap-2 pl-1 text-[12px] text-mute" data-onwp>
-        <span className="h-1.5 w-1.5 animate-blink rounded-full bg-rose" /> 正在合成语音…
-      </div>
-    );
+    return <div className="voice-bar voice-pending mt-1.5" data-onwp>{Array.from({ length: 28 }, (_, i) => <i key={i} style={{ height: `${6 + (i * 7) % 15}px` }} />)}</div>;
   }
   if (!blob) {
     return (
@@ -1017,26 +1083,28 @@ function VoiceBar({ m, onRegen, toast }: { m: Msg; onRegen: (m: Msg) => void; to
       </button>
     );
   }
-  const bars = [6, 10, 14, 11, 16, 12, 8, 5];
   const dur = m.voice?.dur || 0;
   const toggle = () => {
     unlockAudio();
     if (playing) { stopPlaying(); setPlaying(false); return; }
-    setPlaying(true);
+    setProgress(0); setPlaying(true);
     void playBlob(blob).catch((e) => toast((e as Error).message || "播放失败")).finally(() => setPlaying(false));
   };
   return (
-    <button type="button" onClick={toggle} className="press mt-1.5 flex max-w-full items-center gap-2 pl-1" data-onwp>
-      <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${playing ? "bg-rose text-white" : "bg-sakura/40 text-rose"}`}>
+    <div className="voice-wrap mt-1.5" data-onwp>
+      <div className="voice-bar">
+      <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={toggle} className={`voice-play press ${playing ? "bg-rose text-white" : "bg-sakura/40 text-rose"}`}>
         {playing ? <IconStop size={13} /> : <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z" /></svg>}
-      </span>
-      <span className="flex h-6 items-end gap-[2px]">
-        {bars.map((h, i) => (
-          <span key={i} className={`w-[3px] rounded-full ${playing ? "animate-blink bg-rose" : "bg-rose/70"}`} style={{ height: `${h}px`, animationDelay: `${i * 0.15}s` }} />
+      </button>
+      <button type="button" aria-label="跳转播放位置" className="voice-peaks" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); seekVoice(((e.clientX - r.left) / r.width) * (dur || 0)); setProgress((e.clientX - r.left) / r.width); }}>
+        {peaks.map((h, i) => (
+          <i key={i} className={`${i / peaks.length < progress ? "played" : ""} ${playing && Math.abs(i / peaks.length - progress) < 0.08 ? "voice-jump" : ""}`} style={{ height: `${h}px`, animationDelay: `${i * 0.04}s` }} />
         ))}
-      </span>
-      <span className="shrink-0 text-[12px] text-mute">{playing ? "播放中…" : dur ? fmtDur(dur * 1000) : "语音"}</span>
-    </button>
+      </button>
+      <span className="shrink-0 text-[12px] text-mute">{dur ? fmtDur(dur * 1000) : "语音"}</span>
+      </div>
+      <button type="button" className="voice-transcript press" onClick={onTextToggle}>{textOpen ? "收起原文" : "转文字"}</button>
+    </div>
   );
 }
 
@@ -1153,9 +1221,10 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void }) {
+function Bubble({ m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast, groupFirst }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void; groupFirst: boolean }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
+  const [voiceTextOpen, setVoiceTextOpen] = useState(false);
   const hasImages = !!(m.images && m.images.length);
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} translate={translateThink} />
@@ -1164,6 +1233,8 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
   // 只拆「echo 的、生成完成的、开关打开的、短回复」；流式/我方/小作文都保持单气泡
   const parts = m.text ? (!mine && split && m.status === "done" ? splitTextIntoBubbles(m.text) : [m.text]) : [];
   const multi = parts.length > 1;
+  const translation = !mine && m.card?.type === "translate" ? m.card.target : null;
+  const [showTranslation, setShowTranslation] = useState(translateShow === "below");
   const bubbleClass = `g bub ec-bubble inline-block whitespace-pre-wrap break-words px-4 py-2.5 text-[15px] leading-[22px] transition ${selecting ? "" : "active:scale-[0.98]"} ${
     mine ? "me float-right rounded-[22px] rounded-br-md" : "ai rounded-[22px] rounded-bl-md"
   }${multi ? " animate-rise" : ""}`;
@@ -1189,7 +1260,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
     <div className="pt-2 animate-rise">
     {thoughts}
     <div className={`flex items-end gap-2 ${mine ? "justify-end" : ""}`}>
-      {!mine && <Avatar />}
+      {!mine && <Avatar hidden={!groupFirst} />}
       <div className={`max-w-[80%] ${m.card && m.status === "done" ? "w-[80%]" : ""}`}>
         {hasImages && (
           <div className={`mb-1.5 flex flex-wrap gap-1.5 ${mine ? "justify-end" : ""}`}>
@@ -1211,7 +1282,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
             ))}
           </div>
         )}
-        <div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
+        {!(!mine && m.voice && !voiceTextOpen) && <div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
           {parts.map((p, i) => (
             <div
               key={i}
@@ -1227,15 +1298,21 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
               {m.status === "streaming" && i === parts.length - 1 && <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-rose" />}
             </div>
           ))}
-        </div>
+        </div>}
         {mine && <div className="clear-both" />}
-        {m.card && m.status === "done" && <ResultCard card={m.card} />}
-        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} />}
+        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} textOpen={voiceTextOpen} onTextToggle={() => setVoiceTextOpen((v) => !v)} />}
+        {translation && translateShow !== "off" && (
+          translateShow === "tap" && !showTranslation ? (
+            <button type="button" onClick={() => setShowTranslation(true)} className="mt-1 min-h-11 px-2 text-left text-[13px] text-mute">看翻译</button>
+          ) : translateShow === "tap" ? (
+            <button type="button" onClick={() => setShowTranslation(false)} className="mt-1 min-h-11 px-2 text-left text-[13px] leading-5 text-mute">{translation}</button>
+          ) : <div className="mt-1 px-2 text-[13px] leading-5 text-mute">{translation}</div>
+        )}
+        {m.card && m.card.type !== "translate" && m.status === "done" && <ResultCard card={m.card} />}
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
         {m.status !== "streaming" && (
           <p className={`ec-time mt-1 flex items-center gap-2 px-2 text-[11px] opacity-80 ${mine ? "justify-end" : ""}`} data-onwp>
-            <span>{fmtTime(m.at)}</span>
             {!mine && m.text && (
               <>
                 <button type="button" aria-label={speaking === m.id ? "停止朗读" : "朗读这条"} onClick={() => onSpeak(m)} className="press flex items-center gap-1">
@@ -1252,8 +1329,8 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
             )}
           </p>
         )}
-        {mine && <Avatar mine />}
       </div>
+      {mine && <Avatar mine hidden={!groupFirst} />}
     </div>
     {m.status === "error" && <div className="mt-1.5"><ErrorCard m={m} onAction={onAction} busy={busy} /></div>}
     {zoom && (

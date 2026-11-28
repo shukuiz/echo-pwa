@@ -125,6 +125,15 @@ if (typeof document !== "undefined") {
 }
 let current: { audio: HTMLAudioElement; url: string } | null = null;
 
+export function voicePlaybackState(): { currentTime: number; duration: number } {
+  const audio = current?.audio;
+  return audio ? { currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : 0, duration: Number.isFinite(audio.duration) ? audio.duration : 0 } : { currentTime: 0, duration: 0 };
+}
+
+export function seekVoice(seconds: number) {
+  if (current?.audio) current.audio.currentTime = Math.max(0, seconds);
+}
+
 /** 播放一段音频 Blob（TTS 回来的 mp3）；同时只放一条，新的会顶掉旧的 */
 export function playBlob(blob: Blob): Promise<void> {
   if (!sharedAudio) return Promise.reject(new Error("当前设备不支持语音播放"));
