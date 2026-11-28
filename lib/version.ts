@@ -1,11 +1,22 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
 
-export const APP_VERSION = "0.13.7";
+export const APP_VERSION = "0.14.0";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  {
+    version: "0.14.0", date: "2026-11-28", title: "能打电话了 ✿",
+    items: [
+      { t: "打电话", d: "聊天右上角多了电话按钮，点开是全屏通话页：echo 头像外面有会呼吸的光，不用按住，说完停一秒它就听懂接话，它说话时你一开口就能打断；挂断后聊天里留一条「通话 3:12」，点开看文字记录。原来的「对讲机」收掉了" },
+      { t: "语音条会动了", d: "echo 的语音变成波形语音条，播到哪亮到哪，点波形能跳；文字收进「转文字」，想看再点开" },
+      { t: "截图黑白气泡", d: "聊天截图改成黑白气泡；echo 自己截图时可以决定截几条（1 到 30 条）；多选消息后底部多了「截成图」，只截你勾的那几条" },
+      { t: "译文不挤在气泡里", d: "译文移到气泡下面，设置里多了「翻译显示」：气泡下小字 / 点开才看 / 不显示" },
+      { t: "头像排整齐了", d: "连续几条只显示一个头像，贴在第一条气泡顶上；隔了 5 分钟以上，中间居中显示时间" },
+      { t: "小动作不限次数", d: "echo 发语音、截图、记记忆、发文件不再有「一天一两次」的限制，想用就用" },
+    ],
+  },
   { version: "0.13.7", date: "2026-11-28", title: "修好 iPhone 上语音不出声", items: [{ t: "语音播放", d: "修好 iPhone Safari 和 PWA 里点朗读、语音条、对讲机后没有声音的问题" }] },
   {
     version: "0.13.6", date: "2026-11-28", title: "语音条、对讲机和自己的头像 ✿",
