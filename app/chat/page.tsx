@@ -134,7 +134,7 @@ function Chat() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachMenu, setAttachMenu] = useState(false);
   // 截图：先选范围，再预览，最后选存哪本相册
-  const [shot, setShot] = useState<{ id: string; img?: string } | null>(null);
+  const [shot, setShot] = useState<{ id: string; img?: string; multi?: boolean } | null>(null);
   const [skills, setSkills] = useState<any[]>([]);
   const [skillId, setSkillId] = useState<string | null>(null);
   useEffect(() => { api.getSkills().then(x => setSkills(x.skills)).catch(() => {}); }, []);
@@ -390,6 +390,21 @@ function Chat() {
     }
   }
 
+  /** 多选截图：按聊天里的先后顺序截勾选的那几条 */
+  function shotFromIds(ids: string[]) {
+    const set_ = new Set(ids);
+    const rows = messages
+      .filter((m) => set_.has(m.id) && ((m.text || "").trim() || m.images?.length || m.files?.length))
+      .map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || (m.images?.length ? "（发了图片）" : "（发了文件）") }));
+    if (!rows.length) return;
+    try {
+      setShot({ id: ids[ids.length - 1], img: renderChatShot(rows), multi: true });
+      setSel(null); setAnchor(null);
+    } catch {
+      toast("这张没画出来，再试一次");
+    }
+  }
+
   /** 存进相册：mine 是我的（echo 看不到图），echo 是它自己的 */
   async function saveShot(who: "mine" | "echo") {
     if (!shot?.img) return;
@@ -427,7 +442,9 @@ function Chat() {
         if (walkie || settings.mute || settings.proactiveVoice === false) continue;
         void voiceToBar(echoId, text);
       } else if (a.kind === "shot") {
-        const rows = messages.slice(-10).map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || "" }));
+        // count = 这条回复连同之前一共几条；没写就截最近一段（之前 10 条 + 这条）
+        const before = a.count ? a.count - 1 : 10;
+        const rows = (before > 0 ? messages.filter((m) => m.id !== echoId).slice(-before) : []).map((m) => ({ role: (m.role === "user" ? "user" : "echo") as "user" | "echo", text: m.text || "" }));
         try {
           const img = renderChatShot([...rows, { role: "echo", text }]);
           albumSave({ who: a.who, dataUrl: img, title: "聊天截图", source: "chat-shot" })
@@ -643,6 +660,7 @@ function Chat() {
           <button disabled={!picked.length} onClick={() => setAskDel(picked)} className="danger"><GIcon n="trash" s={20} />删除</button>
           <button disabled={!picked.length} onClick={() => favorite(picked)}><GIcon n="heart" s={20} />收藏</button>
           <button disabled={!picked.length} onClick={() => remember(picked)}><GIcon n="brain" s={20} />记住</button>
+          <button disabled={!picked.length} onClick={() => shotFromIds(picked)}><GIcon n="image" s={20} />截成图</button>
         </div>
       </div>
     </div>
@@ -955,7 +973,7 @@ function Chat() {
                 <div className="addl">
                   <button className="gbtn" onClick={() => saveShot("mine")}>我的相册</button>
                   <button className="gbtn" onClick={() => saveShot("echo")}>echo 的相册</button>
-                  <button className="gbtn" onClick={() => buildShot(shot.id, 10)}>换个范围</button>
+                  {!shot.multi && <button className="gbtn" onClick={() => buildShot(shot.id, 10)}>换个范围</button>}
                 </div>
               </>
             ) : (

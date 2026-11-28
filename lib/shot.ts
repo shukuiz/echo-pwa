@@ -42,14 +42,14 @@ export function renderChatShot(messages: ShotMsg[], opts: { title?: string } = {
   canvas.width = W;
   canvas.height = height;
 
-  ctx.fillStyle = "#f6f1ec";
+  ctx.fillStyle = "#fafafa";
   ctx.fillRect(0, 0, W, height);
 
   // 顶部标题 + 日期
-  ctx.fillStyle = "#3f3530";
+  ctx.fillStyle = "#222222";
   ctx.font = 'bold 26px -apple-system, "PingFang SC", sans-serif';
   ctx.fillText(opts.title || "和 echo 的聊天", PAD, 48);
-  ctx.fillStyle = "#9b8f88";
+  ctx.fillStyle = "#777777";
   ctx.font = '18px -apple-system, "PingFang SC", sans-serif';
   ctx.fillText(new Date().toLocaleDateString("zh-CN"), PAD, 76);
 
@@ -64,19 +64,19 @@ export function renderChatShot(messages: ShotMsg[], opts: { title?: string } = {
 
     ctx.beginPath();
     ctx.roundRect(bx, y, bw, bh, 26);
-    ctx.fillStyle = m.role === "user" ? "#f3d9dd" : "#ffffff";
+    ctx.fillStyle = m.role === "user" ? "#111111" : "#ffffff";
     ctx.fill();
     if (m.role === "echo") {
-      ctx.strokeStyle = "#e8e2dc";
+      ctx.strokeStyle = "#c9c9c9";
       ctx.lineWidth = 1;
       ctx.stroke();
     }
-    ctx.fillStyle = "#3f3530";
+    ctx.fillStyle = m.role === "user" ? "#ffffff" : "#111111";
     lines.forEach((s, i) => ctx.fillText(s, bx + 20, y + 38 + i * LINE));
     y += bh + 22;
   }
 
-  ctx.fillStyle = "#b0a49c";
+  ctx.fillStyle = "#777777";
   ctx.font = '16px -apple-system, "PingFang SC", sans-serif';
   ctx.fillText("echo", W - PAD - 34, height - 26);
   return canvas.toDataURL("image/png");
