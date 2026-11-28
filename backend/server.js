@@ -6,13 +6,18 @@ import { ensureDataTree, DATA_DIR } from "./src/storage.js";
 import chatRoute from "./src/routes/chat.js";
 import memoryRoute from "./src/routes/memory.js";
 import filesRoute from "./src/routes/files.js";
+import attachRoute from "./src/routes/attach.js";
+import voiceRoute from "./src/routes/voice.js";
+import thoughtRoute from "./src/routes/thought.js";
 import toolsRoute from "./src/routes/tools.js";
 import settingsRoute from "./src/routes/settings.js";
 import favoritesRoute from "./src/routes/favorites.js";
+import skillsRoute from "./src/routes/skills.js";
 import beautyRoute from "./src/routes/beauty.js";
 import projectRoute from "./src/routes/project.js";
 import codexRoute from "./src/routes/codex.js";
 import windowsRoute from "./src/routes/windows.js";
+import albumRoute from "./src/routes/album.js";
 import { codexBridge } from "./src/codex.js";
 
 const app = Fastify({
@@ -36,13 +41,18 @@ app.get("/api/health", async () => ({ ok: true, ts: Date.now() }));
 await app.register(chatRoute);
 await app.register(memoryRoute);
 await app.register(filesRoute);
+await app.register(attachRoute);
+await app.register(voiceRoute);
+await app.register(thoughtRoute);
 await app.register(toolsRoute);
 await app.register(settingsRoute);
 await app.register(favoritesRoute);
+await app.register(skillsRoute);
 await app.register(beautyRoute);
 await app.register(projectRoute);
 await app.register(codexRoute);
 await app.register(windowsRoute);
+await app.register(albumRoute);
 
 const PORT = Number(process.env.ECHO_PORT || 8787);
 const HOST = process.env.ECHO_HOST || "0.0.0.0";
