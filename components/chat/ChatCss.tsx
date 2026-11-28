@@ -55,6 +55,17 @@ export default function ChatCss() {
       .ec-page .ec-send[data-state="send"]:enabled {
         background-color: var(--ec-accent, var(--hl, #db6c94));
       }
+      .ec-page .voice-bar { display:flex; align-items:center; gap:8px; min-height:44px; }
+      .ec-page .voice-play { display:grid; place-items:center; width:44px; height:44px; border-radius:999px; flex:none; }
+      .ec-page .voice-peaks { display:flex; align-items:center; justify-content:center; gap:2px; min-width:0; flex:1; height:44px; padding:0 2px; }
+      .ec-page .voice-peaks i, .ec-page .voice-pending i { display:block; width:3px; min-height:5px; border-radius:999px; background:#d5d0d2; }
+      .ec-page .voice-peaks i.played { background:var(--rose, #c95b84); }
+      .ec-page .voice-jump { animation:echo-voice-jump .65s ease-in-out infinite alternate; }
+      .ec-page .voice-transcript { min-height:44px; padding:0 4px; color:var(--g-mute,#888); font-size:13px; }
+      .ec-page .voice-pending { gap:2px; padding-left:1px; opacity:.7; animation:echo-voice-breathe 1.4s ease-in-out infinite; }
+      @keyframes echo-voice-jump { to { transform:scaleY(1.18); } }
+      @keyframes echo-voice-breathe { 50% { opacity:.4; } }
+      @media (prefers-reduced-motion: reduce) { .ec-page .voice-jump, .ec-page .voice-pending { animation:none; } }
     `}</style>
   );
 }
