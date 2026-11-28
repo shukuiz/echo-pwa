@@ -1,5 +1,5 @@
 // echo 简易 Service Worker：页面走网络优先，静态资源走缓存优先
-const CACHE = "echo-v23"; // 跟 lib/version.ts 的 APP_VERSION 一起改
+const CACHE = "echo-v24"; // 跟 lib/version.ts 的 APP_VERSION 一起改
 const SHELL = ["/", "/chat", "/beauty", "/workbench", "/memory", "/reminders", "/settings", "/files", "/album", "/favorites", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

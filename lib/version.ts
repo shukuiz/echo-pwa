@@ -1,11 +1,12 @@
 // 版本号 + 更新公告：每次给 App 推一次完整更新，都要在这里加一段，并把 public/sw.js 的缓存名一起升级
 
-export const APP_VERSION = "0.13.6";
+export const APP_VERSION = "0.13.7";
 export const SEEN_VERSION_KEY = "echo-seen-version";
 
 export type ChangeNote = { version: string; date: string; title: string; items: { t: string; d: string }[] };
 
 export const CHANGELOG: ChangeNote[] = [
+  { version: "0.13.7", date: "2026-11-28", title: "修好 iPhone 上语音不出声", items: [{ t: "语音播放", d: "修好 iPhone Safari 和 PWA 里点朗读、语音条、对讲机后没有声音的问题" }] },
   {
     version: "0.13.6", date: "2026-11-28", title: "语音条、对讲机和自己的头像 ✿",
     items: [
