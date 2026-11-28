@@ -16,7 +16,7 @@ import { refreshLive, resumeGenerations, startGeneration, stopGeneration, useLiv
 import { addFavorite } from "@/lib/favorites";
 import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
-import { blobDuration, cacheVoice, getVoiceBlob, playBlob, startRecording, stopPlaying, type Recorder } from "@/lib/wav";
+import { blobDuration, cacheVoice, getVoiceBlob, playBlob, startRecording, stopPlaying, unlockAudio, type Recorder } from "@/lib/wav";
 import { renderChatShot } from "@/lib/shot";
 import type { EchoAction } from "@/lib/echo-actions";
 
@@ -147,6 +147,7 @@ function Chat() {
   // 对讲机模式：按住说话松手直接发，echo 回复后自动朗读（不存语音条）
   const [walkie, setWalkie] = useState(false);
   const spokenRef = useRef<string | null>(null);
+  const autoSpeakErrorRef = useRef(false);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const [winTitle, setWinTitle] = useState("");
@@ -266,6 +267,7 @@ function Chat() {
   }
 
   function send() {
+    unlockAudio();
     if ((!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || busy || confirm) return;
     const imgs = pendingImages;
     const files = pendingFiles;
@@ -351,6 +353,7 @@ function Chat() {
 
   /** 朗读一条回复：再点一次停 */
   async function speak(m: Msg) {
+    unlockAudio();
     if (!m.text) return;
     if (speaking === m.id) { stopPlaying(); setSpeaking(null); return; }
     setSpeaking(m.id);
@@ -366,7 +369,9 @@ function Chat() {
   /** 对讲机模式：echo 回复后自动念出来（临时朗读，不存语音条） */
   async function autoSpeak(m: Msg) {
     if (settings.mute || !m.text) return;
-    try { await playBlob(await api.speak(m.text.slice(0, 900))); } catch {}
+    try { await playBlob(await api.speak(m.text.slice(0, 900))); } catch (e) {
+      if (!autoSpeakErrorRef.current) { autoSpeakErrorRef.current = true; toast((e as Error).message || "朗读失败"); }
+    }
   }
 
   /** 把这条消息存成 .md 文件（浏览器直接下载，不经过服务器） */
@@ -798,7 +803,7 @@ function Chat() {
             <div className="absolute right-0 top-full z-30 mt-2 w-[176px] rounded-[18px] bg-tile p-1 shadow-soft">
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, quietThink: !s.quietThink }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">自动展开思考<span className={`relative h-[16px] w-[28px] rounded-capsule ${!quiet ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${!quiet ? "left-[14px]" : "left-[2px]"}`} /></span></button>
               <button type="button" onClick={() => set("settings", (s) => ({ ...s, splitBubbles: !s.splitBubbles }))} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">分气泡<span className={`relative h-[16px] w-[28px] rounded-capsule ${settings.splitBubbles ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${settings.splitBubbles ? "left-[14px]" : "left-[2px]"}`} /></span></button>
-              <button type="button" onClick={() => setWalkie((v) => !v)} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">对讲机<span className={`relative h-[16px] w-[28px] rounded-capsule ${walkie ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${walkie ? "left-[14px]" : "left-[2px]"}`} /></span></button>
+              <button type="button" onClick={() => { unlockAudio(); setWalkie((v) => !v); }} className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[13px]">对讲机<span className={`relative h-[16px] w-[28px] rounded-capsule ${walkie ? "bg-rose" : "bg-orb/35"}`}><span className={`absolute top-[2px] h-3 w-3 rounded-full bg-white ${walkie ? "left-[14px]" : "left-[2px]"}`} /></span></button>
             </div>
           </>}
         </div>
@@ -846,7 +851,7 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} />
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} />
           </div>
         ))}
         {working && (
@@ -995,7 +1000,7 @@ function Avatar({ mine = false }: { mine?: boolean }) {
 }
 
 /** 语音条：一条可反复播放的语音；音频在内存里，刷新后失效可重新生成 */
-function VoiceBar({ m, onRegen }: { m: Msg; onRegen: (m: Msg) => void }) {
+function VoiceBar({ m, onRegen, toast }: { m: Msg; onRegen: (m: Msg) => void; toast: (message: string) => void }) {
   const [playing, setPlaying] = useState(false);
   const blob = getVoiceBlob(m.id);
   if (m.voice?.pending) {
@@ -1015,9 +1020,10 @@ function VoiceBar({ m, onRegen }: { m: Msg; onRegen: (m: Msg) => void }) {
   const bars = [6, 10, 14, 11, 16, 12, 8, 5];
   const dur = m.voice?.dur || 0;
   const toggle = () => {
+    unlockAudio();
     if (playing) { stopPlaying(); setPlaying(false); return; }
     setPlaying(true);
-    void playBlob(blob).finally(() => setPlaying(false));
+    void playBlob(blob).catch((e) => toast((e as Error).message || "播放失败")).finally(() => setPlaying(false));
   };
   return (
     <button type="button" onClick={toggle} className="press mt-1.5 flex max-w-full items-center gap-2 pl-1" data-onwp>
@@ -1147,7 +1153,7 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, onAction, busy, onSpeak, speaking, onVoice }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void }) {
+function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!(m.images && m.images.length);
@@ -1224,7 +1230,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, onMenu, on
         </div>
         {mine && <div className="clear-both" />}
         {m.card && m.status === "done" && <ResultCard card={m.card} />}
-        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} />}
+        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} />}
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
         {m.status !== "streaming" && (

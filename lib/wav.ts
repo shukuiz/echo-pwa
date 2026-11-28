@@ -110,22 +110,37 @@ export async function startRecording(onLevel?: (level: number) => void, onAutoSt
   };
 }
 
+const sharedAudio = typeof Audio !== "undefined" ? new Audio() : null;
+let audioUnlocked = false;
+export function unlockAudio() {
+  if (audioUnlocked || !sharedAudio) return;
+  sharedAudio.src = "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==";
+  void sharedAudio.play().then(() => { sharedAudio.pause(); sharedAudio.currentTime = 0; audioUnlocked = true; }).catch(() => {});
+}
+if (typeof document !== "undefined") {
+  const onFirstGesture = () => { unlockAudio(); document.removeEventListener("pointerdown", onFirstGesture, true); document.removeEventListener("touchend", onFirstGesture, true); document.removeEventListener("keydown", onFirstGesture, true); };
+  document.addEventListener("pointerdown", onFirstGesture, { capture: true, once: true });
+  document.addEventListener("touchend", onFirstGesture, { capture: true, once: true });
+  document.addEventListener("keydown", onFirstGesture, { capture: true, once: true });
+}
 let current: { audio: HTMLAudioElement; url: string } | null = null;
 
 /** 播放一段音频 Blob（TTS 回来的 mp3）；同时只放一条，新的会顶掉旧的 */
 export function playBlob(blob: Blob): Promise<void> {
+  if (!sharedAudio) return Promise.reject(new Error("当前设备不支持语音播放"));
   stopPlaying();
   const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
+  const audio = sharedAudio;
+  audio.src = url;
   current = { audio, url };
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const done = () => {
       if (current?.audio === audio) { URL.revokeObjectURL(url); current = null; }
       resolve();
     };
     audio.onended = done;
-    audio.onerror = done;
-    audio.play().catch(done);
+    audio.onerror = () => { done(); reject(new Error("语音播放失败，请点一下语音条再试")); };
+    audio.play().catch(() => { if (current?.audio === audio) { URL.revokeObjectURL(url); current = null; } reject(new Error("iPhone 拦住了声音，点一下语音条再听")); });
   });
 }
 
@@ -134,6 +149,8 @@ export function stopPlaying() {
   const { audio, url } = current;
   current = null;
   try { audio.pause(); } catch {}
+  audio.removeAttribute("src");
+  audio.load();
   URL.revokeObjectURL(url);
 }
 
