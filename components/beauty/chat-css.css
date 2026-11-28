@@ -1,0 +1,32 @@
+.cs-page { display: grid; gap: 10px; padding: 12px 0 24px; }
+.cs-page > p { font-size: 14px; }
+.cs-label { font-size: 14px; font-weight: 600; }
+.cs-editor {
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  border: 1px solid var(--hl-soft, #ecd5df);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgb(var(--tile));
+  color: inherit;
+  font: 16px/1.5 ui-monospace, monospace;
+}
+.cs-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.cs-actions button, .cs-preset button {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgb(var(--tile));
+  font-size: 14px;
+}
+.cs-actions button:first-child, .cs-preset button[aria-pressed="true"] {
+  background: var(--hl, #db6c94);
+  color: var(--hl-ink, #fff);
+}
+.cs-notice { min-height: 1.5em; }
+.cs-presets { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.cs-preset { display: flex; flex: none; gap: 2px; max-width: 100%; }
+.cs-preset button:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-preset button:last-child { min-width: 44px; flex: none; }
+.cs-chat { justify-self: start; padding: 8px 0; font-size: 14px; text-decoration: underline; }

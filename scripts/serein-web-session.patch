@@ -1,0 +1,111 @@
+diff --git a/web/server/webAuth.mjs b/web/server/webAuth.mjs
+index 4f8633a..f5dae2f 100644
+--- a/web/server/webAuth.mjs
++++ b/web/server/webAuth.mjs
+@@ -1,5 +1,5 @@
+ import { readFileSync } from 'node:fs';
+-import { scryptSync, timingSafeEqual } from 'node:crypto';
++import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+ 
+ export function authenticate(header, record) {
+   if (!header?.startsWith('Basic ')) return false;
+@@ -11,16 +11,79 @@ export function authenticate(header, record) {
+   return expected.length === actual.length && timingSafeEqual(expected, actual);
+ }
+ 
++const COOKIE = "__Host-serein-session";
++const AGE = 30 * 24 * 60 * 60;
++const attempts = new Map();
++function signature(payload, record) {
++  return createHmac("sha256", record.hash).update(payload).digest("hex");
++}
++function cookie(value, age = AGE) {
++  return `${COOKIE}=${value}; Path=/; Max-Age=${age}; Secure; HttpOnly; SameSite=Lax`;
++}
++function validSession(request, record) {
++  const token = request.headers.cookie?.split(";").map(v=>v.trim()).find(v=>v.startsWith(COOKIE+"="))?.slice(COOKIE.length+1) || "";
++  const [expiry, nonce, mac] = token.split(".");
++  if (!/^\d{13}$/.test(expiry || "") || Number(expiry) <= Date.now() || !/^[a-f0-9]{64}$/.test(mac || "") || !/^[a-f0-9]{32}$/.test(nonce || "")) return false;
++  const expected = signature(expiry+"."+nonce, record);
++  return timingSafeEqual(Buffer.from(mac),Buffer.from(expected));
++}
++function issue(response, record) {
++  const payload = (Date.now()+AGE*1000)+"."+randomBytes(16).toString("hex");
++  response.setHeader("Set-Cookie",cookie(payload+"."+signature(payload,record)));
++}
+ export function requireWebAuth(request, response, filename) {
+-  try {
+-    if (authenticate(request.headers.authorization, JSON.parse(readFileSync(filename, 'utf8')))) return true;
+-  } catch {
+-    response.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+-    response.end('页面鉴权尚未配置，请运行管理脚本的选项 0。');
++  let record;
++  try { record = JSON.parse(readFileSync(filename, "utf8")); }
++  catch {
++    response.writeHead(503, {"Content-Type":"text/plain; charset=utf-8"});
++    response.end("页面鉴权尚未配置，请运行管理脚本的选项 0。");
++    return false;
++  }
++  const endpoint = request.url?.split("?")[0];
++  if (endpoint === "/auth/logout") {
++    const origin = request.headers.origin;
++    const host = request.headers.host;
++    if (request.method !== "POST" || !origin || (!URL.canParse(origin) || new URL(origin).host !== host)) {
++      response.writeHead(403); response.end(); return false;
++    }
++    response.writeHead(303, {"Set-Cookie":cookie("",0), Location:"/", "Cache-Control":"no-store"});
++    response.end(); return false;
++  }
++  if (validSession(request,record)) return true;
++  if (endpoint === "/auth/login" && request.method === "POST") {
++    const origin = request.headers.origin;
++    if (!origin || (!URL.canParse(origin) || new URL(origin).host !== request.headers.host)) {
++      response.writeHead(403);response.end();return false;
++    }
++    const address = request.socket.remoteAddress;
++    const now = Date.now();
++    for (const [key,value] of attempts) if (value.until <= now) attempts.delete(key);
++    const attempt = attempts.get(address) || {count:0,until:now+60000};
++    attempts.set(address,attempt);
++    if (++attempt.count > 12) {response.writeHead(429,{"Retry-After":"60"});response.end("请稍后重试");return false;}
++    let body = "";
++    request.on("data",chunk=>{
++      body += chunk;
++      if (body.length > 4096) request.destroy();
++    });
++    request.on("end",()=>{
++      const form = new URLSearchParams(body);
++      const header = "Basic "+Buffer.from((form.get("username")||"")+":"+(form.get("password")||"")).toString("base64");
++      if (!authenticate(header,record)) {response.writeHead(303,{Location:"/?login=failed"});response.end();return;}
++      attempts.delete(address);
++      issue(response,record);
++      response.writeHead(303,{Location:"/","Cache-Control":"no-store"});
++      response.end();
++    });
+     return false;
+   }
+-  response.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Serein", charset="UTF-8"', 'Cache-Control': 'no-store',
+-    'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
+-  response.end('Authentication required');
++  // Preserve authenticated API callers while issuing a durable browser cookie.
++  if (authenticate(request.headers.authorization, record)) {issue(response,record);return true;}
++  response.writeHead(401, {"Cache-Control":"no-store", "Content-Type":"text/html; charset=utf-8",
++    "Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
++    "X-Content-Type-Options":"nosniff"});
++  response.end(`<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Serein 登录</title>
++<style>body{font:18px system-ui;margin:15vh auto;padding:24px;max-width:340px}input,button{display:block;box-sizing:border-box;width:100%;padding:12px;margin:12px 0;font:inherit}</style>
++<h1>Serein</h1><form action="/auth/login" method="post"><label>账号<input name="username" autocomplete="username" required></label><label>密码<input type="password" name="password" autocomplete="current-password" required></label><p>登录后记住此设备 30 天</p><button>登录</button></form></html>`);
+   return false;
+ }
+diff --git a/web/src/components/SettingsPanel.jsx b/web/src/components/SettingsPanel.jsx
+index eb9d37e..35f06de 100644
+--- a/web/src/components/SettingsPanel.jsx
++++ b/web/src/components/SettingsPanel.jsx
+@@ -243,6 +243,7 @@ export function SettingsPanel({
+           </div>
+           <div role="tabpanel" id="settings-content-update" aria-labelledby="settings-tab-update" aria-hidden={tab !== "update"} inert={tab !== "update"}>
+             <VersionUpdate />
++            <form action="/auth/logout" method="post"><button type="submit">退出这台设备的登录</button></form>
+           </div>
+         </div>
+       </section>

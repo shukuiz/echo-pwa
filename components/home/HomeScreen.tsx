@@ -31,8 +31,9 @@ function Dock() {
   return (
     <nav ref={ref} className="g dock" data-glass data-tint="0.06">
       <DockIcon n="chat" label="聊天" href="/chat" />
-      <DockIcon n="tool" label="工作台" href="/workbench" />
+      <DockIcon n="tool" label="技能" href="/workbench" />
       <DockIcon n="book" label="记忆本" href="/memory" />
+      <DockIcon n="photo" label="相册" href="/album" />
     </nav>
   );
 }

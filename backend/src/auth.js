@@ -1,7 +1,10 @@
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 const COOKIE = "__Host-echo-session";
-const SESSION_SECONDS = 7 * 24 * 60 * 60;
+const SESSION_SECONDS = 30 * 24 * 60 * 60;
 const LOGIN_WINDOW_MS = 60_000;
 const MAX_LOGIN_ATTEMPTS = 12;
 const MAX_SESSIONS = 16;
@@ -25,14 +28,23 @@ export function installAuth(app, env = process.env) {
   }
 
   const expectedPassword = passwordHash(password);
-  const sessions = new Map();
+  const filename = path.join(env.ECHO_DATA_DIR || process.env.ECHO_DATA_DIR || fileURLToPath(new URL("../data", import.meta.url)), "auth-sessions.json");
+  let saved = {};
+  try { saved = JSON.parse(readFileSync(filename, "utf8")); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const fingerprint = expectedPassword.toString("hex");
+  const sessions = new Map(saved.fingerprint === fingerprint ? saved.sessions : []);
+  function persist() {
+    mkdirSync(path.dirname(filename), {recursive:true});
+    writeFileSync(filename + ".tmp", JSON.stringify({fingerprint, sessions:[...sessions]}), {mode:0o600});
+    renameSync(filename + ".tmp", filename);
+  }
   let loginAttempts = 0;
   let loginWindowEnd = 0;
 
   function sessionId(req) {
     const value = req.headers.cookie?.split(";").map((item) => item.trim())
       .find((item) => item.startsWith(COOKIE + "="))?.slice(COOKIE.length + 1);
-    return /^[0-9a-f]{64}$/.test(value ?? "") ? value : "";
+    return /^[0-9a-f]{64}$/.test(value ?? "") ? passwordHash(value).toString("hex") : "";
   }
 
   function authenticated(req) {
@@ -80,12 +92,14 @@ export function installAuth(app, env = process.env) {
     }
     if (sessions.size >= MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
     const id = randomBytes(32).toString("hex");
-    sessions.set(id, now + SESSION_SECONDS * 1000);
+    sessions.set(passwordHash(id).toString("hex"), now + SESSION_SECONDS * 1000);
+    persist();
     return reply.header("Set-Cookie", sessionCookie(id, SESSION_SECONDS)).send({ ok: true });
   });
 
   app.post("/api/auth/logout", async (req, reply) => {
     sessions.delete(sessionId(req));
+    persist();
     return reply.header("Set-Cookie", sessionCookie("", 0)).send({ ok: true });
   });
 

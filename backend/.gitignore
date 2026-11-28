@@ -3,12 +3,17 @@ node_modules/
 # 敏感与个人数据：绝不进 Git
 # API Key / 代理凭据
 data/memory/settings/config.json
+data/memory/settings/memory-models.json
+data/memory/settings/memory-models.json.tmp
 # 聊天记录与记忆、提醒
 data/memory/store.json
 data/memory/chat.json
+data/memory/favorites.json
+data/memory/beauty.json
 # 个人记忆文本与文件、日记
 data/memory/about-you.md
 data/memory/about-us.md
 data/memory/today.md
 data/memory/diary/
 data/memory/files/
+data/memory/settings/codex-thread.json

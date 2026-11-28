@@ -1,3 +1,4 @@
+import { shared, sharedMemory } from "./shared-memory.js";
 // 拼接 System Prompt：说明书(AGENTS/CLAUDE) + 文字记忆(about-you/about-us) + 结构化记忆(store)
 import { paths, readText, readJSON, DATA_DIR } from "./storage.js";
 
@@ -9,7 +10,8 @@ export async function buildSystemPrompt() {
   const today = await readText(paths.today(DATA_DIR));
   const store = await readJSON(paths.store(DATA_DIR), { memory: [] });
 
-  const byTab = (t) => (store.memory || []).filter((m) => m.tab === t);
+  if (shared) store.memory = (await sharedMemory("list")).filter(m => m.origin === "Echo");
+  const byTab = (t) => (store.memory || []).filter((m) => m.tab === t && m.status !== "archived");
   const fmt = (items) => items.map((m) => `- ${m.title ? m.title + "：" : ""}${m.text}`).join("\n");
 
   const sections = [];

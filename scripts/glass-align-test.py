@@ -62,8 +62,16 @@ async def check(pg, name, shot=True, m=None):
 async def main():
     async with async_playwright() as p:
         br = await p.chromium.launch(args=["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
-        ctx = await br.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True,
-                                   user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+        iphone = await br.new_context(**p.devices["iPhone 13"])
+        mobile = await iphone.new_page()
+        await mobile.goto(B + "/?glassdebug")
+        await mobile.wait_for_function("() => window.__echoGlass?.imgReady")
+        css = await mobile.evaluate("() => document.documentElement.matches('.th-glass.nog') && !window.__echoGlass.gl")
+        if not css and not BASELINE:
+            fails.append("iphone-css-fallback")
+        await iphone.close()
+
+        ctx = await br.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True)
         await ctx.add_init_script("try{localStorage.setItem('echo-beauty-v1',JSON.stringify(Object.assign(JSON.parse(localStorage.getItem('echo-beauty-v1')||'{}'),{motion:0})))}catch(e){}")
         pg = await ctx.new_page(); pg.set_default_timeout(15000)
         pg.on("console", lambda m: logs.append(f"[{m.type}] {m.text}") if m.type in ("error", "warning") else None)
@@ -114,6 +122,12 @@ async def main():
 
         # 5) 换字体（霞鹜新致宋）：在美化页点，再回主页
         await pg.goto(B + "/beauty?glassdebug"); await pg.wait_for_timeout(1500)
+        await pg.locator(".bscroll").evaluate("(el) => { el.scrollTop = 400; }")
+        await settle(pg)
+        await check(pg, "beauty-scroll-down")
+        await pg.locator(".bscroll").evaluate("(el) => { el.scrollTop = 0; }")
+        await settle(pg)
+        await check(pg, "beauty-scroll-up")
         await pg.get_by_text("霞鹜新致宋").first.click(); await pg.wait_for_timeout(1500)
         await settle(pg, 200)
         await check(pg, "10-beauty-song")

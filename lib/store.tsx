@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { seedFiles, seedMemory, seedMessages, seedReminders } from "./mock";
-import { api, ECHO_AUTH_ENABLED } from "./api";
+import { api, ECHO_AUTH_ENABLED, type MemoryExtra, type ReplyAction, type ReplyErrorKind, type ThinkingSettings } from "./api";
 
 export type Role = "user" | "echo";
 export type Card =
@@ -18,8 +18,23 @@ export type Msg = {
   text: string;
   status?: "streaming" | "done" | "error" | "stopped";
   errorMessage?: string;
+  /** 出错原因分类和可以做的事（重试 / 去设置 / 重新登录） */
+  errorKind?: ReplyErrorKind;
+  actions?: ReplyAction[];
+  /** 这次生成的请求 ID：只有同一个 ID 的进度能改这条消息 */
+  genId?: string;
+  /** 生成这条时用的模型 / 连接 */
+  model?: string;
+  via?: string;
+  reasoning?: string;
+  /** 后端的小提示（比如思考参数被接口拒绝后已去掉重试） */
+  note?: string;
   at: number;
   card?: Card;
+  /** 用户发的图片（base64 dataURL）：只随这一次请求走，绝不写入 localStorage */
+  images?: string[];
+  /** 用户发的文件：只留名字、字数和抽出来的文字，同样不落盘 */
+  files?: { name: string; chars: number; text: string }[];
   think?: { text: string; tags: { kind: "memory" | "tool" | "hand"; label: string }[] };
 };
 
@@ -34,7 +49,8 @@ export type MemoryItem = {
   text: string;
   pinned: boolean;
   updatedAt: number;
-};
+  createdAt?: number;
+} & MemoryExtra;
 
 export type Reminder = {
   id: string;
@@ -45,10 +61,12 @@ export type Reminder = {
 };
 
 export type Hand = "codex" | "claude";
-export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string };
+export type ApiPreset = { id: string; name: string; url: string; hasKey: boolean; keyMask: string; model?: string; thinking?: ThinkingSettings };
 export type Settings = {
+  avatarMe: string;
+  avatarEcho: string;
   apiKey: string;
-  apiMode: "official" | "custom";
+  apiMode: "official" | "custom" | "codex";
   provider: string;
   presets: ApiPreset[];
   activePresetId: string;
@@ -62,7 +80,12 @@ export type Settings = {
   models: string[];
   quietThink: boolean;
   showStatusBar: boolean;
+  splitBubbles: boolean;
+  /** 展开思考框时自动把英文思考翻成中文（免费接口，失败就显示原文） */
+  thinkTranslate: boolean;
   mute: boolean;
+  /** 让 echo 偶尔主动发语音（暗号 [[echo:voice]]） */
+  proactiveVoice: boolean;
   tools: Record<string, boolean>;
 };
 
@@ -82,6 +105,8 @@ const defaultState: State = {
   reminders: seedReminders,
   files: seedFiles,
   settings: {
+    avatarMe: "",
+    avatarEcho: "",
     apiKey: "",
     apiMode: "official",
     provider: "openai",
@@ -97,7 +122,10 @@ const defaultState: State = {
     models: ["claude-sonnet-4-5", "gpt-4o", "deepseek-chat"],
     quietThink: true,
     showStatusBar: true,
+    splitBubbles: true,
+    thinkTranslate: true,
     mute: false,
+    proactiveVoice: true,
     tools: { translate: true, media: true, worldbook: true, miniapp: true, script: true },
   },
 };
@@ -120,10 +148,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [toastText, setToastText] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
+  const messageVersion = useRef(0);
+  const settingsVersion = useRef(0);
 
   // 读取本地存储
   useEffect(() => {
     if (ECHO_AUTH_ENABLED) {
+      // 登录模式下聊天/记忆以后端为准，本地只记浅色 / 深色（以前连它也不存，刷新就回到浅色）
+      try {
+        const saved = JSON.parse(localStorage.getItem(KEY) || "{}") as Partial<State>;
+        if (saved.theme === "dark" || saved.theme === "light") setState((p) => ({ ...p, theme: saved.theme as State["theme"] }));
+      } catch {}
       setReady(true);
       return;
     }
@@ -143,9 +178,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   // 写入本地存储
   useEffect(() => {
-    if (!ready || ECHO_AUTH_ENABLED) return;
+    if (!ready) return;
     try {
-      localStorage.setItem(KEY, JSON.stringify(state));
+      // 图片和文件正文不持久化：写盘前剥掉，避免几 MB base64 / 整本书撑爆 localStorage
+      const strip = (m: Msg) => {
+        if ((!m.images?.length && !m.files?.length)) return m;
+        return { ...m, images: undefined, files: m.files?.map((f) => ({ name: f.name, chars: f.chars, text: "" })) };
+      };
+      const persist = ECHO_AUTH_ENABLED
+        ? { theme: state.theme }
+        : { ...state, messages: state.messages.map(strip) };
+      localStorage.setItem(KEY, JSON.stringify(persist));
     } catch {}
   }, [state, ready]);
 
@@ -153,44 +196,66 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
+    const initialMessageVersion = messageVersion.current;
     (async () => {
       try {
-        const [hist, mem, cfg] = await Promise.all([api.getHistory(), api.getMemory(), api.getSettings()]);
+        const [hist, mem] = await Promise.all([api.getHistory(), api.getMemory()]);
         if (cancelled) return;
         setState((prev) => ({
           ...prev,
-          messages: (hist.messages || []).map((m) => ({
+          messages: messageVersion.current !== initialMessageVersion ? prev.messages : (hist.messages || []).map((m) => ({
             id: m.id ?? uid(),
             role: m.role,
             text: m.text ?? "",
+            reasoning: typeof m.reasoning === "string" ? m.reasoning : undefined,
+            note: typeof m.note === "string" ? m.note : undefined,
+            genId: typeof m.genId === "string" ? m.genId : undefined,
+            model: typeof m.model === "string" ? m.model : undefined,
+            via: typeof m.via === "string" ? m.via : undefined,
+            errorKind: typeof m.errorKind === "string" ? m.errorKind : undefined,
+            errorMessage: typeof m.errorMessage === "string" ? m.errorMessage : undefined,
             status: (m.status === "streaming" ? "stopped" : m.status ?? "done") as Msg["status"],
             at: m.at ?? Date.now(),
           })),
           memory: mem.memory || [],
           reminders: mem.reminders || [],
-          settings: {
-            ...prev.settings,
-            apiKey: "", // Key 不落前端
-            apiMode: cfg.apiMode ?? prev.settings.apiMode,
-            provider: cfg.provider ?? prev.settings.provider,
-            presets: cfg.presets ?? prev.settings.presets,
-            activePresetId: cfg.activePresetId ?? prev.settings.activePresetId,
-            officialKeyMasks: cfg.officialKeyMasks ?? prev.settings.officialKeyMasks,
-            proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
-            anthropicWorkspaceId: cfg.anthropicWorkspaceId ?? prev.settings.anthropicWorkspaceId,
-            model: cfg.model ?? prev.settings.model,
-            models: cfg.models ?? prev.settings.models,
-            codexEnabled: cfg.codexEnabled ?? prev.settings.codexEnabled,
-            claudeEnabled: cfg.claudeEnabled ?? prev.settings.claudeEnabled,
-            defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
-            quietThink: cfg.quietThink ?? prev.settings.quietThink,
-            showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
-            mute: cfg.mute ?? prev.settings.mute,
-            tools: cfg.tools ?? prev.settings.tools,
-          },
         }));
       } catch {}
     })();
+    return () => { cancelled = true; };
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    const initialSettingsVersion = settingsVersion.current;
+    api.getSettings().then((cfg) => {
+      if (cancelled) return;
+      setState((prev) => settingsVersion.current !== initialSettingsVersion ? prev : {
+        ...prev,
+        settings: {
+          ...prev.settings,
+          apiKey: "", // Key 不落前端
+          apiMode: cfg.apiMode ?? prev.settings.apiMode,
+          provider: cfg.provider ?? prev.settings.provider,
+          presets: cfg.presets ?? prev.settings.presets,
+          activePresetId: cfg.activePresetId ?? prev.settings.activePresetId,
+          officialKeyMasks: cfg.officialKeyMasks ?? prev.settings.officialKeyMasks,
+          proxyUrl: cfg.proxyUrl ?? prev.settings.proxyUrl,
+          anthropicWorkspaceId: cfg.anthropicWorkspaceId ?? prev.settings.anthropicWorkspaceId,
+          model: cfg.model ?? prev.settings.model,
+          models: cfg.models ?? prev.settings.models,
+          codexEnabled: cfg.codexEnabled ?? prev.settings.codexEnabled,
+          claudeEnabled: cfg.claudeEnabled ?? prev.settings.claudeEnabled,
+          defaultHand: cfg.defaultHand ?? prev.settings.defaultHand,
+          quietThink: prev.settings.quietThink,
+          showStatusBar: cfg.showStatusBar ?? prev.settings.showStatusBar,
+          splitBubbles: prev.settings.splitBubbles,
+          mute: cfg.mute ?? prev.settings.mute,
+          tools: cfg.tools ?? prev.settings.tools,
+        },
+      });
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [ready]);
 
@@ -202,6 +267,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [state.theme]);
 
   const set: Ctx["set"] = useCallback((key, value) => {
+    if (key === "messages") messageVersion.current++;
+    if (key === "settings") settingsVersion.current++;
     setState((prev) => ({
       ...prev,
       [key]: typeof value === "function" ? (value as (p: unknown) => unknown)(prev[key]) : value,
@@ -215,6 +282,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
+    messageVersion.current++;
+    settingsVersion.current++;
     setState(defaultState);
   }, []);
 
@@ -222,7 +291,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     <StoreCtx.Provider value={{ ...state, ready, set, toast, resetAll }}>
       {children}
       {toastText && (
-        <div className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center">
+        <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+64px)] z-[70] flex justify-center">
           <div className="animate-pop rounded-capsule bg-ink/85 px-4 py-2 text-[15px] text-cream shadow-soft">{toastText}</div>
         </div>
       )}

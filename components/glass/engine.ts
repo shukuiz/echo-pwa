@@ -6,10 +6,31 @@ import {
 } from "@/lib/color";
 
 export const MAX = 16;       // 着色器一次最多 16 块
-export const GRID_CAP = 12;  // 桌面网格/页面内容最多 12 块，其余给 Dock/标题栏（最多 4 块），超出的走 CSS 玻璃
+export const GRID_CAP = 12;
+const TEXTURE_CAP = 2048;        // 壁纸纹理最长边：缩好以后每张壁纸只上传一次
+// 桌面网格/页面内容最多 12 块，其余给 Dock/标题栏（最多 4 块），超出的走 CSS 玻璃
+
+/** 玻璃画质：高清 = 2 倍像素、60 帧水波；均衡 = iPhone 默认，1.5 倍、约 100 万像素、只在变化时重画、水波 30 帧；省电 = CSS 毛玻璃 */
+export type GlassQuality = "hd" | "balanced" | "css";
+const TIERS = {
+  hd: { dpr: 2, budget: 1_800_000, motionMs: 16, recheckMs: 250, checkMs: 500 },
+  balanced: { dpr: 1.5, budget: 1_000_000, motionMs: 33, recheckMs: Infinity, checkMs: 2000 },
+} as const;
+export const isIOSDevice = () => typeof navigator !== "undefined" && (/iPhone|iPad|iPod/.test(navigator.userAgent)
+  || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)); // iPad 可能自称 Mac
+/** 「自动」= iPhone / iPad 用均衡，其它用高清 */
+export const resolveQuality = (q: GlassQuality | "auto" | undefined): GlassQuality => (q && q !== "auto" ? q : isIOSDevice() ? "balanced" : "hd");
+
+// 防闪退保险：开 WebGL 前记一个标记，稳定 10 秒再擦掉。下次打开标记还在 = 上次很可能闪退了
+const GUARD_KEY = "echo-glass-guard";
+const GUARD_STABLE_MS = 10_000;
+type Guard = { pending?: number; fails: number; locked?: boolean };
+const readGuard = (): Guard => { try { const g = JSON.parse(localStorage.getItem(GUARD_KEY) || "{}"); return { fails: +g.fails || 0, pending: +g.pending || undefined, locked: g.locked === true }; } catch { return { fails: 0 }; } };
+const writeGuard = (g: Guard) => { try { localStorage.setItem(GUARD_KEY, JSON.stringify(g)); } catch {} };
+export const GLASS_NOTE_EVENT = "echo-glass-note";
 
 export type Rect = { left: number; top: number; width: number; height: number };
-export type Entry = { el: HTMLElement; x: number; y: number; w: number; h: number; clip?: [number, number] | null; vis?: number; w0?: number };
+export type Entry = { el: HTMLElement; x: number; y: number; w: number; h: number; clip?: [number, number] | null; clipX?: [number, number]; vis?: number; w0?: number };
 export type HomeProvider = {
   entries: () => Entry[];             // 网格里的玻璃（位置来自缓存，滑动时不读布局）
   dragged?: () => Entry | null;        // 正在拖的那块（总是用 WebGL，画在最上面）
@@ -26,7 +47,7 @@ const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
 const FS = `
 precision highp float;
 uniform sampler2D uTex; uniform vec2 uRes; uniform vec2 uImg; uniform vec2 uScale; uniform float uTime;
-uniform vec4 uRect[${MAX}]; uniform vec4 uOpt[${MAX}]; uniform vec4 uClip[${MAX}]; uniform int uN;
+uniform vec4 uRect[${MAX}]; uniform vec4 uOpt[${MAX}]; uniform vec4 uClip[${MAX}]; uniform vec2 uPageClip; uniform int uN;
 uniform float uRefract, uTint, uBlur, uEdge, uShine, uWobble;
 uniform vec3 uTintCol, uMeCol;
 vec2 coverUV(vec2 px){
@@ -44,18 +65,19 @@ vec3 tap(vec2 px, float bl){
 }
 void main(){
   vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uScale; // 画布 CSS 像素，原点 = 画布左上角
-  vec3 col = texture2D(uTex, coverUV(px)).rgb;
+  vec3 col = vec3(0.); bool glassPixel = false;
   float shadow = 0.;
   for (int i=0;i<${MAX};i++){
     if (i >= uN) break;
     vec4 R = uRect[i]; vec4 O = uOpt[i];          // O: 圆角, 额外染色, 我方气泡, 只画边框
     vec4 C = uClip[i]; if (px.y < C.x || px.y > C.y) continue; // C: 竖向裁剪上/下, 底板不透明度, 深色字
+    if (O.w > 1.5 && (px.x < uPageClip.x || px.x > uPageClip.y)) continue;
     vec2 hb = R.zw*.5; vec2 c = R.xy + hb; vec2 lp = px - c;
     float r = min(O.x, min(hb.x,hb.y));
     float d = roundBox(lp, hb, r);
     if (d > 0.) { shadow = max(shadow, exp(-pow(d/7.,2.)) * .10 * smoothstep(-hb.y*.5, hb.y*.3, lp.y)); continue; }
     float inner = -d; float m = min(hb.x,hb.y);
-    if (O.w > .5 && inner > 6.5) { shadow = 0.; continue; } // 照片/动图：内容不折射，只留边框和光
+    if (mod(O.w, 2.) > .5 && inner > 6.5) { shadow = 0.; continue; } // 照片/动图：内容不折射，只留边框和光
     float t = clamp(inner / min(m, 36.), 0., 1.);
     float e = 1.5;
     vec2 g = vec2(roundBox(lp+vec2(e,0.),hb,r)-roundBox(lp-vec2(e,0.),hb,r), roundBox(lp+vec2(0.,e),hb,r)-roundBox(lp-vec2(0.,e),hb,r));
@@ -64,7 +86,7 @@ void main(){
     vec2 off = -g * bend;
     float w = uWobble * .06 * (.35 + .65*(1.-t));
     off += vec2(sin(lp.y*.045 + uTime*.9 + R.x*.01), cos(lp.x*.05 - uTime*.7 + R.y*.01)) * w * 3.;
-    vec3 gc = tap(px + off, uBlur);
+    vec3 gc = tap(px + off, uBlur * mix(1., .65, t));
     float op = C.z;                                  // 透明度只缩放染色/补偿，不动折射
     gc = mix(gc, uTintCol, clamp((uTint*.01 + O.y) * op, 0., .95));
     if (O.z > .5) gc = mix(gc, uMeCol, .62);
@@ -79,14 +101,15 @@ void main(){
     float edgeGlint = hairline * (upperLeft*.66 + lowerRight*.48) * uEdge * .04;
     gc = mix(gc, vec3(1.), clamp(edgeGlint, 0., .76));
     gc = mix(gc, vec3(1.), exp(-pow((d+.6)/.8,2.)) * .10);
-    col = gc; shadow = 0.;
+    col = gc; glassPixel = true; shadow = 0.;
   }
   col *= 1. - shadow;
-  gl_FragColor = vec4(col, 1.);
+  gl_FragColor = glassPixel ? vec4(col, 1.) : vec4(0., 0., 0., shadow);
 }`;
 
 class GlassEngine {
   canvas: HTMLCanvasElement | null = null;
+  private wall: HTMLDivElement | null = null;
   gl: WebGLRenderingContext | null = null;
   prog: WebGLProgram | null = null;
   tex: WebGLTexture | null = null;
@@ -107,24 +130,75 @@ class GlassEngine {
   basis: Basis = { left: 0, top: 0, w: 0, h: 0 };
   scale: [number, number] = [1, 1]; // 缓冲区像素 / CSS 像素，横竖各算各的（不再假设 100vh == innerHeight）
   lastN = 0;
+  private textureSize = { width: 1, height: 1 };
   debug = false;                    // ?glassdebug 或开发模式：每帧记录"画的位置 vs DOM 位置"给自动化测试
   debugSnap: { frame: number; basis: Basis & { bufW: number; bufH: number; canvas: Rect }; rows: DebugRow[] } | null = null;
-  private probe: HTMLDivElement | null = null;
   rad = new WeakMap<HTMLElement, number>();
   t0 = performance.now();
   frames = 0;                 // 测试用：画了多少帧
+  uploads = 0;                // 测试用：壁纸纹理上传了几次
   rectF = new Float32Array(MAX * 4); optF = new Float32Array(MAX * 4); clipF = new Float32Array(MAX * 4);
   // 登记可能早于 init（子组件的 layout effect 先跑），所以观察器一开始就建好
   private ro: ResizeObserver | null = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => this.invalidate()) : null;
 
-  init(canvas: HTMLCanvasElement) {
+  quality: GlassQuality = "hd";
+  private glTried = false;
+  private guard: Guard = { fails: 0 };
+  /** 这次打开为什么没用 WebGL（给美化页的提示用）："" | crashed | locked | lost */
+  fallbackReason: "" | "crashed" | "locked" | "lost" = "";
+  private keyboard = false;        // 均衡档：键盘弹出时暂停 WebGL，先用 CSS 玻璃
+  private stableTimer = 0;
+  private lastPaint = -Infinity;
+  private moving = false;          // 这一帧有翻页 / 拖动在动
+  private settleUntil = 0;         // 滚动、尺寸变化后的一小段时间里每帧都重读位置（惯性滚动、过渡动画）
+  private lastRead = 0;
+  private adaptDelay = 0;
+
+  init(canvas: HTMLCanvasElement, wall: HTMLDivElement) {
     if (this.canvas === canvas) return;
     this.canvas = canvas;
+    this.wall = wall;
     const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     this.rm = !!mq?.matches;
-    mq?.addEventListener?.("change", (e) => { this.rm = e.matches; this.applyClasses(); this.schedAdapt(); });
+    mq?.addEventListener?.("change", (e) => { this.rm = e.matches; this.applyClasses(); this.invalidate(); });
+    // 上次开着 WebGL 没撑过 10 秒就没了：记一次失败；连续两次就一直用 CSS，直到她在美化页手动选画质
+    // 另一个还开着的页面（桌面多开标签）也会留着标记：先用 BroadcastChannel 问一声，有人回应就不算闪退
+    this.guard = readGuard();
+    this.guardReady = this.checkGuard();
+    // 正常退出（切走、关掉）不算闪退
+    window.addEventListener("pagehide", this.clearPending);
+    canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); this.fallbackReason = "lost"; this.note("lost"); this.useCssFallback(); });
+    this.ro?.observe(wall);
+    try { this.debug = process.env.NODE_ENV !== "production" || new URLSearchParams(location.search).has("glassdebug"); } catch {}
+    this.resize();
+    window.addEventListener("resize", this.onResize);
+    window.addEventListener("orientationchange", this.onResize);
+    window.visualViewport?.addEventListener("resize", this.onViewport);
+    window.visualViewport?.addEventListener("scroll", this.onResize);
+    window.addEventListener("pageshow", this.onResize);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) this.onResize(); });
+    window.addEventListener("scroll", this.onScroll, { capture: true, passive: true });
+    document.addEventListener("load", this.onAsset, true); // 图片/字体加载完，内容可能挪了
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    fonts?.ready.then(() => this.invalidate()).catch(() => {});
+    fonts?.addEventListener?.("loadingdone", () => this.invalidate());
+    this.applyClasses();
+    if (this.wpUrl && !this.imgReady) this.setWallpaper(this.wpUrl, true);
+    (window as unknown as { __echoGlass?: GlassEngine }).__echoGlass = this; // 调试/自动化测试用：读帧数、模式
+  }
+
+  /** 需要时才建 WebGL（选了省电 / 被保险拦下就不建） */
+  private ensureGL() {
+    if (!this.guardChecked || this.gl || this.glTried || !this.canvas || this.quality === "css" || this.guard.locked || this.fallbackReason === "crashed") return;
+    this.glTried = true;
+    const canvas = this.canvas;
     let gl: WebGLRenderingContext | null = null;
-    try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: false }) as WebGLRenderingContext | null; } catch {}
+    // 先记标记再建：真闪退时这个标记会留到下次打开
+    this.guard = { ...readGuard(), ...this.guard, pending: Date.now() };
+    writeGuard(this.guard);
+    clearTimeout(this.stableTimer);
+    this.stableTimer = window.setTimeout(() => { this.guard = { fails: 0 }; writeGuard(this.guard); }, GUARD_STABLE_MS);
+    try { gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false, alpha: true, powerPreference: "low-power" }); } catch {}
     if (gl) {
       try {
         const sh = (type: number, src: string) => {
@@ -140,7 +214,7 @@ class GlassEngine {
         const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
         const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-        for (const n of ["uTex", "uRes", "uImg", "uScale", "uTime", "uRect", "uOpt", "uClip", "uN", "uRefract", "uTint", "uBlur", "uEdge", "uShine", "uWobble", "uTintCol", "uMeCol"]) this.U[n] = gl.getUniformLocation(prog, n);
+        for (const n of ["uTex", "uRes", "uImg", "uScale", "uTime", "uRect", "uOpt", "uClip", "uPageClip", "uN", "uRefract", "uTint", "uBlur", "uEdge", "uShine", "uWobble", "uTintCol", "uMeCol"]) this.U[n] = gl.getUniformLocation(prog, n);
         this.tex = gl.createTexture();
         this.gl = gl; this.prog = prog; this.noGL = false;
       } catch (e) {
@@ -148,53 +222,97 @@ class GlassEngine {
         this.gl = null; this.noGL = true;
       }
     }
-    canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); this.gl = null; this.noGL = true; this.applyClasses(); this.schedAdapt(); });
-    // 探针：一个 position:fixed; inset:0 的隐形盒子 = 画布真正该盖住的区域（iOS 上它不一定等于 innerWidth×innerHeight 或 100vw×100vh）
-    const pr = document.createElement("div");
-    pr.id = "g-probe"; pr.setAttribute("aria-hidden", "");
-    pr.style.cssText = "position:fixed;left:0;top:0;right:0;bottom:0;visibility:hidden;pointer-events:none;z-index:-1";
-    document.body.appendChild(pr); this.probe = pr;
-    this.ro?.observe(pr);
-    try { this.debug = process.env.NODE_ENV !== "production" || new URLSearchParams(location.search).has("glassdebug"); } catch {}
-    this.resize();
-    window.addEventListener("resize", this.onResize);
-    window.addEventListener("orientationchange", this.onResize);
-    window.visualViewport?.addEventListener("resize", this.onResize);
-    window.visualViewport?.addEventListener("scroll", this.onResize);
-    window.addEventListener("pageshow", this.onResize);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) this.onResize(); });
-    window.addEventListener("scroll", this.onScroll, { capture: true, passive: true });
-    document.addEventListener("load", this.onAsset, true); // 图片/字体加载完，内容可能挪了
-    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
-    fonts?.ready.then(() => this.invalidate()).catch(() => {});
-    fonts?.addEventListener?.("loadingdone", () => this.invalidate());
+    if (!this.gl) this.clearPending();
+    if (this.img && this.imgReady) this.uploadTexture(this.img);
+    this.applyClasses(); this.resize(); this.invalidate();
+  }
+  private guardReady: Promise<void> | null = null;
+  private guardChecked = false;
+  private channel: BroadcastChannel | null = null;
+  private async checkGuard() {
+    try { this.channel = new BroadcastChannel(GUARD_KEY); } catch {}
+    // 别的页面问「标记是你的吗」：是自己的就回一声
+    if (this.channel) this.channel.onmessage = (e) => { if (e.data?.ping && this.guard.pending && e.data.ping === this.guard.pending) this.channel?.postMessage({ pong: this.guard.pending }); };
+    const pending = this.guard.pending;
+    if (pending) {
+      const alive = await new Promise<boolean>((resolve) => {
+        if (!this.channel) return resolve(false);
+        const t = setTimeout(() => resolve(false), 400);
+        const prev = this.channel.onmessage;
+        this.channel.onmessage = (e) => { if (e.data?.pong === pending) { clearTimeout(t); resolve(true); } prev?.call(this.channel!, e); };
+        this.channel.postMessage({ ping: pending });
+      });
+      if (!alive) {
+        this.guard = { fails: this.guard.fails + 1, locked: this.guard.locked || this.guard.fails + 1 >= 2 };
+        writeGuard(this.guard);
+        this.fallbackReason = this.guard.locked ? "locked" : "crashed";
+      } else this.guard = { ...this.guard, pending: undefined }; // 是别的页面的，不动它
+    } else if (this.guard.locked) this.fallbackReason = "locked";
+    this.guardChecked = true;
+    if (this.fallbackReason) this.note(this.fallbackReason as "crashed" | "locked");
+    if (this.look?.theme === "glass") this.ensureGL();
+  }
+  private clearPending = () => {
+    if (!this.guard.pending) return;
+    this.guard = { ...this.guard, pending: undefined };
+    writeGuard(this.guard);
+  };
+  private note(reason: "crashed" | "locked" | "lost") {
+    const text = reason === "locked" ? "液态玻璃连着两次让 App 退出了，先一直用省电玻璃；想再试试，去 美化 → 玻璃参数 → 玻璃画质 选一下"
+      : reason === "crashed" ? "上次液态玻璃好像让 App 退出了，这次先用省电玻璃 ( ˘ᵕ˘ )"
+        : "液态玻璃刚刚停了一下，先换成省电玻璃，下次打开再试";
+    setTimeout(() => window.dispatchEvent(new CustomEvent(GLASS_NOTE_EVENT, { detail: text })), 600);
+  }
+  /** 她在美化页手动选了画质：清掉保险记录，重新试 WebGL */
+  resetGuard() {
+    this.guard = { fails: 0 }; writeGuard(this.guard);
+    if (this.fallbackReason === "crashed" || this.fallbackReason === "locked") this.fallbackReason = "";
+    this.glTried = false; this.ensureGL(); this.applyClasses(); this.invalidate();
+  }
+  /** 键盘弹出：均衡档先暂停 WebGL（输入时气泡大挪动，CSS 玻璃更稳） */
+  private onViewport = () => {
+    const vv = window.visualViewport;
+    const kb = !!vv && this.quality === "balanced" && innerHeight - vv.height > 150;
+    if (kb !== this.keyboard) { this.keyboard = kb; this.applyClasses(); }
+    this.onScroll();
+  };
+
+  /** CSS 模式：没有 WebGL、减弱动态效果、选了省电、或均衡档键盘弹出时都不跑着色器 */
+  get cssMode() { return this.noGL || this.rm || this.quality === "css" || this.keyboard; }
+  get tier() { return TIERS[this.quality === "hd" ? "hd" : "balanced"]; }
+
+  private useCssFallback() {
+    this.clearPending();
+    this.gl = null;
+    this.tex = null;
+    this.prog = null;
+    this.noGL = true;
     this.applyClasses();
-    if (this.wpUrl && !this.imgReady) this.setWallpaper(this.wpUrl, true);
-    (window as unknown as { __echoGlass?: GlassEngine }).__echoGlass = this; // 调试/自动化测试用：读帧数、模式
+    this.resize();
+    this.schedAdapt();
   }
 
-  /** CSS 模式：没有 WebGL、减弱动态效果、或仿真风格都不跑着色器 */
-  get cssMode() { return this.noGL || this.rm; }
-
-  private onResize = () => { this.resize(); this.invalidate(); this.schedAdapt(120); };
-  private onScroll = () => { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(120); };
+  private settle() { this.settleUntil = performance.now() + 180; }
+  private onResize = () => this.onScroll();
+  private onScroll = () => { this.rectsDirty = true; this.needDraw = true; this.settle(); this.schedAdapt(120); this.requestFrame(); };
   private onAsset = (e: Event) => { const t = e.target as Element | null; if (t && t.tagName === "IMG" && t.closest?.(".bty")) this.invalidate(); };
-  /** 量探针 → 把画布（和 #g-wall）摆到同一个盒子上，缓冲区按这个盒子的 CSS 尺寸 × DPR(≤2) 建。返回基准是否变了 */
+  /** 用实际画布的屏幕坐标对齐玻璃，限制缓冲区像素数。 */
   private resize() {
-    const cv = this.canvas, pr = this.probe;
-    if (!cv || !pr) return false;
-    const r = pr.getBoundingClientRect();
+    const cv = this.canvas, wall = this.wall;
+    if (!cv || !wall) return false;
+    const r = wall.getBoundingClientRect();
     const w = r.width || document.documentElement.clientWidth || innerWidth, h = r.height || document.documentElement.clientHeight || innerHeight;
     const b = this.basis, changed = b.w !== w || b.h !== h || b.left !== r.left || b.top !== r.top;
-    const d = Math.min(window.devicePixelRatio || 1, 2), bw = Math.max(1, Math.round(w * d)), bh = Math.max(1, Math.round(h * d));
+    // 清晰度：最高 2 倍、缓冲区约 180 万像素封顶（iPhone 393×852 正好跑满 2 倍 ≈ 134 万像素；大屏按预算往下缩）
+    const t = this.tier;
+    const d = this.drawable() ? Math.min(window.devicePixelRatio || 1, t.dpr, Math.sqrt(t.budget / (w * h))) : 0;
+    const bw = Math.max(1, Math.floor(w * d)), bh = Math.max(1, Math.floor(h * d));
     if (changed || cv.width !== bw || cv.height !== bh) {
       this.basis = { left: r.left, top: r.top, w, h };
-      const st = cv.style;
-      st.width = w + "px"; st.height = h + "px";
       if (cv.width !== bw) cv.width = bw;
       if (cv.height !== bh) cv.height = bh;
       this.scale = [bw / w, bh / h];
-      if (this.img && this.imgReady) this.sampler.build(this.img, w, h);
+      if (this.img && this.imgReady && (b.w !== w || b.h !== h)) this.sampler.build(this.img, w, h);
       this.rectsDirty = true; this.needDraw = true;
       return true;
     }
@@ -206,9 +324,13 @@ class GlassEngine {
   // ---------- 外观 ----------
   setLook(b: Beauty) {
     const prev = this.look; this.look = b;
+    const q = resolveQuality(b.quality);
+    if (q !== this.quality) { this.quality = q; this.resize(); }
+    if (b.theme === "glass") this.ensureGL();
     this.applyClasses();
     const R = document.documentElement.style, tint = hex2rgb(b.tint), me = hex2rgb(b.me);
     R.setProperty("--g-tint", tint.join(",")); R.setProperty("--g-amt", (b.P.tint * 0.01).toFixed(3)); R.setProperty("--g-me", me.join(","));
+    R.setProperty("--g-fallback-blur", `${Math.min(4, 1 + b.P.blur * 0.75)}px`); // 回退的毛玻璃轻一点，字更清楚
     R.setProperty("--g-icon", hex2rgb(b.icon).join(",")); R.setProperty("--g-ica", (b.iconA / 100).toFixed(2));
     R.setProperty("--g-meink", contrast([38, 48, 61], me) >= contrast([255, 255, 255], me) ? "#26303d" : "#fff");
     // 根上的值只是兜底（面板、没算到的元素）；每个元素自己的字色在 adapt() 里按它身后的实际颜色算
@@ -230,7 +352,7 @@ class GlassEngine {
     }
     h.toggle("nog", this.cssMode);
     h.toggle("wall-on", this.walls > 0);
-    h.toggle("wall-gl", this.glWalls > 0 && !this.cssMode && b?.theme === "glass");
+    h.toggle("wall-gl", this.glWalls > 0 && this.imgReady && !this.cssMode && b?.theme === "glass");
   }
 
   setWallpaper(url: string, force = false) {
@@ -246,59 +368,95 @@ class GlassEngine {
       this.resize();
       this.sampler.build(img, this.basis.w || innerWidth, this.basis.h || innerHeight);
       if (this.look) this.setLook(this.look);
-      const gl = this.gl;
-      if (gl && this.tex) {
-        gl.bindTexture(gl.TEXTURE_2D, this.tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-      }
-      this.needDraw = true; this.schedAdapt();
+      this.uploadTexture(img);
+      this.needDraw = true; this.schedAdapt(); this.kick();
     };
     img.onerror = () => console.warn("壁纸加载失败", url);
     img.src = url;
+  }
+
+  /** 壁纸缩到 ≤2048 后上传一次；换壁纸或重建 WebGL 时才再传 */
+  private uploadTexture(img: HTMLImageElement) {
+    const gl = this.gl;
+    if (!gl || !this.tex) return;
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    const limit = Math.min(TEXTURE_CAP, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+    let source: HTMLImageElement | HTMLCanvasElement = img;
+    if (longest > limit) {
+      const thumbnail = document.createElement("canvas");
+      const ratio = limit / longest;
+      thumbnail.width = Math.max(1, Math.round(img.naturalWidth * ratio));
+      thumbnail.height = Math.max(1, Math.round(img.naturalHeight * ratio));
+      const context = thumbnail.getContext("2d");
+      if (!context) { this.useCssFallback(); return; }
+      context.imageSmoothingQuality = "high";
+      context.drawImage(img, 0, 0, thumbnail.width, thumbnail.height);
+      source = thumbnail;
+    }
+    this.textureSize = { width: source instanceof HTMLImageElement ? source.naturalWidth : source.width, height: source instanceof HTMLImageElement ? source.naturalHeight : source.height };
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    if (gl.getError() !== gl.NO_ERROR) this.useCssFallback();
+    this.uploads++;
   }
 
   // ---------- 登记 ----------
   register(el: HTMLElement, chrome: boolean) {
     this.regs.set(el, { chrome, rect: null, clip: null });
     this.ro?.observe(el);
-    this.rectsDirty = true; this.needDraw = true; this.schedAdapt();
+    this.invalidate();
   }
   unregister(el: HTMLElement) {
     this.regs.delete(el); this.ro?.unobserve(el);
     el.removeAttribute("data-cssg");
     this.needDraw = true;
+    this.kick();
   }
-  setHome(p: HomeProvider | null) { this.home = p; this.needDraw = true; this.schedAdapt(); }
+  setHome(p: HomeProvider | null) { this.home = p; this.invalidate(); }
   addTicker(f: () => boolean | void) { this.tickers.add(f); this.kick(); return () => { this.tickers.delete(f); }; }
   enterWall(gl: boolean) { this.walls++; if (gl) this.glWalls++; this.applyClasses(); this.needDraw = true; this.kick(); this.schedAdapt(); }
-  leaveWall(gl: boolean) { this.walls = Math.max(0, this.walls - 1); if (gl) this.glWalls = Math.max(0, this.glWalls - 1); this.applyClasses(); }
-  invalidate() { this.rectsDirty = true; this.needDraw = true; this.schedAdapt(); this.kick(); }
+  leaveWall(gl: boolean) { this.walls = Math.max(0, this.walls - 1); if (gl) this.glWalls = Math.max(0, this.glWalls - 1); this.applyClasses(); this.kick(); }
+  invalidate() { this.rectsDirty = true; this.needDraw = true; this.settle(); this.schedAdapt(); this.kick(); }
 
   // ---------- 一帧只有一个 rAF：先跑翻页/拖动，再画玻璃 ----------
-  private kick() { if (!this.raf && typeof window !== "undefined") this.raf = requestAnimationFrame(this.frame); }
+  requestFrame() { this.kick(); }
+  private kick() { if (!this.raf && typeof window !== "undefined" && !document.hidden) this.raf = requestAnimationFrame(this.frame); }
   private frame = () => {
     this.raf = 0;
+    if (document.hidden) return;
     let moving = false;
     this.tickers.forEach((f) => { if (f()) moving = true; });
     if (moving) this.needDraw = true;
+    this.moving = moving;
     const drawing = this.drawable();
+    const now = performance.now();
+    const settling = now < this.settleUntil;
     if (drawing) {
-      // 自检（不是靠它对齐，对齐靠上面的各种事件）：静止时每 0.5 秒量一下探针，iOS 偶尔改了视口却不发 resize
-      const now = performance.now();
-      if (!moving && now - this.lastCheck > 500) { this.lastCheck = now; if (this.resize()) this.home?.sync?.(); }
-      if (this.look?.motion || this.needDraw) { this.needDraw = false; this.draw(); }
+      if (!moving && now - this.lastCheck > this.tier.checkMs) { this.lastCheck = now; if (this.resize()) this.home?.sync?.(); }
+      if (this.needDraw || settling || (this.look?.motion && now - this.lastPaint >= this.tier.motionMs)) {
+        this.needDraw = false;
+        this.lastPaint = now;
+        this.draw();
+      }
+    } else if (this.needDraw) {
+      this.needDraw = false;
+      this.resize();
     }
-    if (this.walls > 0 || this.tickers.size) this.kick();
+    if (moving || (drawing && (settling || this.look?.motion))) this.kick();
   };
   private drawable() {
     return !!(this.gl && this.imgReady && this.glWalls > 0 && this.look?.theme === "glass" && !this.cssMode);
   }
 
   private readRegs() {
-    if (!this.rectsDirty) return;
+    // Read positions in the same frame as movement, including compositor scroll settling.
+    const now = performance.now();
+    const recheck = this.moving || now < this.settleUntil || now - this.lastRead > this.tier.recheckMs;
+    if (!this.rectsDirty && !recheck) return;
     this.rectsDirty = false;
+    this.lastRead = now;
     this.resize();
     this.home?.sync?.();
     this.regs.forEach((r, el) => {
@@ -349,13 +507,16 @@ class GlassEngine {
       const tint = (+(el.dataset.tint || 0)) * (isMe && b.bubMode === "glass" ? 0.3 : 1);
       clipF.set([c.clip ? c.clip[0] - oy : -1e4, c.clip ? c.clip[1] - oy : 1e4, +(el.dataset.wa ?? 1), el.dataset.ink === "d" ? 1 : 0], n * 4);
       rectF.set([c.x - ox, c.y - oy, c.w, c.h], n * 4);
-      optF.set([this.radOf(el) * (c.w / (c.w0 || c.w)), tint, isMe && b.bubMode === "tint" ? 1 : 0, el.hasAttribute("data-rim") ? 1 : 0], n * 4);
+      const flags = Number(el.hasAttribute("data-rim")) + (c.clipX ? 2 : 0);
+      optF.set([this.radOf(el) * (c.w / (c.w0 || c.w)), tint, isMe && b.bubMode === "tint" ? 1 : 0, flags], n * 4);
       n++;
     }
     const tint = hex2rgb(b.tint).map((v) => v / 255), me = hex2rgb(b.me).map((v) => v / 255);
     gl.viewport(0, 0, cv.width, cv.height);
     const U = this.U;
-    gl.uniform1i(U.uTex, 0); gl.uniform2f(U.uRes, cv.width, cv.height); gl.uniform2f(U.uImg, this.img!.naturalWidth, this.img!.naturalHeight);
+    const pageClip = list.find((entry) => entry.clipX)?.clipX;
+    if (pageClip) gl.uniform2f(U.uPageClip, pageClip[0] - ox, pageClip[1] - ox);
+    gl.uniform1i(U.uTex, 0); gl.uniform2f(U.uRes, cv.width, cv.height); gl.uniform2f(U.uImg, this.textureSize.width, this.textureSize.height);
     gl.uniform2f(U.uScale, this.scale[0], this.scale[1]); gl.uniform1f(U.uTime, b.motion ? (performance.now() - this.t0) / 1000 : 0);
     gl.uniform4fv(U.uRect, rectF); gl.uniform4fv(U.uOpt, optF); gl.uniform4fv(U.uClip, clipF); gl.uniform1i(U.uN, n);
     gl.uniform1f(U.uRefract, b.P.refract); gl.uniform1f(U.uTint, b.P.tint); gl.uniform1f(U.uBlur, b.P.blur);
@@ -384,7 +545,11 @@ class GlassEngine {
   // ---------- 自动字色：每个元素按"底色×不透明度 叠在它身后那块壁纸上"的亮度挑深浅 ----------
   schedAdapt(delay?: number) {
     if (typeof window === "undefined") return;
-    if (delay) { setTimeout(() => this.schedAdapt(), delay); return; }
+    if (delay) {
+      window.clearTimeout(this.adaptDelay);
+      this.adaptDelay = window.setTimeout(() => this.schedAdapt(), delay);
+      return;
+    }
     if (!this.adaptT) this.adaptT = requestAnimationFrame(() => { this.adaptT = 0; this.adapt(); });
   }
   private shellOf(el: HTMLElement) {
@@ -417,7 +582,7 @@ class GlassEngine {
       if (custom) { ink = isDarkInk(custom) ? "d" : "l"; vars = inkSetCustom(custom, effs, sh.glassy); }
       else { ink = inkOfBands(effs, sh.glassy); vars = inkSet(ink, sh.a, sh.glassy); }
       for (const k in vars) el.style.setProperty(k, vars[k]);
-      if (el.dataset.ink !== ink) { el.dataset.ink = ink; this.needDraw = true; }
+      if (el.dataset.ink !== ink) { el.dataset.ink = ink; this.needDraw = true; this.kick(); }
     }
     // 直接压在壁纸上的字：状态栏、图标名、时间、翻页点
     for (const el of Array.from(document.querySelectorAll<HTMLElement>(".bty [data-onwp]"))) {

@@ -41,8 +41,8 @@ function Face({ now }: { now: Date }) {
       })}
       <line x1="50" y1="50" x2="50" y2="29" strokeWidth="4.2" transform={`rotate(${ha} 50 50)`} />
       <line x1="50" y1="50" x2="50" y2="17" strokeWidth="2.8" transform={`rotate(${ma} 50 50)`} />
-      <line x1="50" y1="57" x2="50" y2="14" strokeWidth="1.2" stroke="#ff7fa0" transform={`rotate(${sa} 50 50)`} />
-      <circle cx="50" cy="50" r="3" fill="#ff7fa0" stroke="none" />
+      <line x1="50" y1="57" x2="50" y2="14" strokeWidth="1.2" stroke="var(--hl)" transform={`rotate(${sa} 50 50)`} />
+      <circle cx="50" cy="50" r="3" fill="var(--hl-deep)" stroke="none" />
     </svg>
   );
 }
@@ -183,7 +183,7 @@ function Echo({ w }: { w: WidgetItem }) {
     <div className="wpad" style={{ padding: "14px 16px" }}>
       {head}
       <p className="clamp2" style={{ fontSize: 14.5, lineHeight: 1.45, marginTop: 10 }}>{msg}</p>
-      <div className="rose" style={{ fontSize: 12.5, marginTop: "auto" }}>点我回她 ›</div>
+      <div className="rose" style={{ fontSize: 12.5, marginTop: "auto" }}>打开聊天 ›</div>
     </div>
   );
   const recent = messages.filter((m) => m.text).slice(-4);
@@ -206,7 +206,7 @@ function Remind({ w }: { w: WidgetItem }) {
   const next = reminders.filter((r) => !r.done).sort((a, b) => a.time - b.time)[0];
   const t = next ? next.text : "暂无提醒 ( ˘ᵕ˘ )", tm = next ? fmtTime(next.time) : "点一下去记一条";
   const bell = (s: number) => (
-    <div style={{ width: s, height: s, borderRadius: "50%", display: "grid", placeItems: "center", background: "rgba(255,183,94,.9)", color: "#fff", flexShrink: 0 }}>
+    <div style={{ width: s, height: s, borderRadius: "50%", display: "grid", placeItems: "center", background: "var(--hl-alt)", color: "var(--hl-alt-ink)", flexShrink: 0, boxShadow: "0 4px 12px -5px var(--hl-glow)", textShadow: "none" }}>
       <GIcon n="bell" s={s * 0.55} w={2} />
     </div>
   );

@@ -10,6 +10,8 @@ export const paths = {
   memory: (d) => path.join(d, "memory"),
   store: (d) => path.join(d, "memory", "store.json"), // 结构化记忆唯一数据源
   chat: (d) => path.join(d, "memory", "chat.json"), // 聊天记录
+  favorites: (d) => path.join(d, "memory", "favorites.json"), // 收藏本
+  beauty: (d) => path.join(d, "memory", "beauty.json"), // 美化设置的云端备份（不含图片）
   aboutYou: (d) => path.join(d, "memory", "about-you.md"),
   aboutUs: (d) => path.join(d, "memory", "about-us.md"),
   today: (d) => path.join(d, "memory", "today.md"),
@@ -22,7 +24,7 @@ export const paths = {
   claude: (d) => path.join(d, "CLAUDE.md"),
 };
 
-const DEFAULT_AGENTS = `# echo · 说明书（AGENTS.md / CLAUDE.md 内容保持同步）
+export const DEFAULT_AGENTS = `# echo · 说明书（AGENTS.md / CLAUDE.md 内容保持同步）
 
 ## 他是谁
 echo，一个温柔、话不多的小助手。喜欢用颜文字，说话像雾天里的风铃。
