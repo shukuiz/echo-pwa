@@ -55,17 +55,23 @@ export default function ChatCss() {
       .ec-page .ec-send[data-state="send"]:enabled {
         background-color: var(--ec-accent, var(--hl, #db6c94));
       }
-      .ec-page .voice-bar { display:flex; align-items:center; gap:8px; min-height:44px; }
-      .ec-page .voice-play { display:grid; place-items:center; width:44px; height:44px; border-radius:999px; flex:none; }
-      .ec-page .voice-peaks { display:flex; align-items:center; justify-content:center; gap:2px; min-width:0; flex:1; height:44px; padding:0 2px; }
-      .ec-page .voice-peaks i, .ec-page .voice-pending i { display:block; width:3px; min-height:5px; border-radius:999px; background:#d5d0d2; }
-      .ec-page .voice-peaks i.played { background:var(--rose, #c95b84); }
+      .ec-page .ec-navcap { display:flex; align-items:center; height:44px; padding:0; border-radius:22px; overflow:hidden; }
+      .ec-page .ec-capbtn { display:inline-flex; align-items:center; justify-content:center; gap:4px; height:44px; min-width:44px; padding:0 12px; font-size:14px; color:inherit; background:none; border:0; }
+      .ec-page .ec-capsep { width:1px; height:20px; background:currentColor; opacity:.18; flex:none; }
+      .ec-page .ec-avatar-empty { color:var(--g-ink, inherit); }
+      .ec-page .voice-bubble { padding:6px 12px 6px 6px; max-width:100%; }
+      .ec-page .voice-bar { display:flex; align-items:center; gap:6px; min-height:36px; }
+      .ec-page .voice-play { display:grid; place-items:center; width:44px; height:44px; margin:-4px -4px -4px -4px; flex:none; background:none; border:0; }
+      .ec-page .voice-dot { display:grid; place-items:center; width:32px; height:32px; border-radius:999px; background:var(--hl, #c95b84); color:var(--hl-ink, #fff); }
+      .ec-page .voice-peaks { display:flex; align-items:center; gap:2px; flex:1; min-width:0; height:44px; margin:-4px 0; background:none; border:0; padding:0; }
+      .ec-page .voice-peaks i, .ec-page .voice-pending i { display:block; width:3px; min-height:4px; border-radius:2px; background:color-mix(in srgb, var(--hl, #c95b84) 32%, transparent); flex:none; }
+      .ec-page .voice-peaks i.played { background:var(--hl, #c95b84); }
+      .ec-page .voice-dur { font-size:13px; font-variant-numeric:tabular-nums; flex:none; }
+      .ec-page .voice-text { margin:6px 2px 2px 8px; padding-top:6px; border-top:1px solid rgba(0,0,0,.08); font-size:15px; line-height:22px; white-space:pre-wrap; word-break:break-word; }
       .ec-page .voice-jump { animation:echo-voice-jump .65s ease-in-out infinite alternate; }
-      .ec-page .voice-transcript { min-height:44px; padding:0 4px; color:var(--g-mute,#888); font-size:13px; }
       .ec-page .voice-pending { gap:2px; padding-left:1px; opacity:.7; animation:echo-voice-breathe 1.4s ease-in-out infinite; }
       @keyframes echo-voice-jump { to { transform:scaleY(1.18); } }
       @keyframes echo-voice-breathe { 50% { opacity:.4; } }
-      .ec-callbtn { width:40px; height:40px; padding:0; display:grid; place-items:center; margin-right:6px; }
       .ec-callpill { display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:0 16px; border-radius:22px; background:var(--tile,#fff); font-size:15px; box-shadow:0 1px 0 rgba(0,0,0,.04); }
       .ec-calllog { max-height:60vh; overflow-y:auto; padding:0 18px 18px; display:flex; flex-direction:column; gap:10px; font-size:15px; line-height:22px; }
       .ec-calllog b { display:block; font-size:12px; color:var(--g-mute,#888); font-weight:500; }

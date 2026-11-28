@@ -148,6 +148,8 @@ function Chat() {
   // 打电话：全屏通话页；callLog = 正在看的那次通话记录
   const [calling, setCalling] = useState(false);
   const [callLog, setCallLog] = useState<Msg["call"] | null>(null);
+  // 语音气泡里展开了文字的那些消息（长按「转文字」）
+  const [voiceText, setVoiceText] = useState<string[]>([]);
   const [work, setWork] = useState<Work | null>(null);
   const [now, setNow] = useState(Date.now());
   const [winTitle, setWinTitle] = useState("");
@@ -786,14 +788,17 @@ function Chat() {
       footer={selectBar || composer}
       right={
         <>
-        <button type="button" className={`ec-nav-btn chip press ec-callbtn ${busy ? "opacity-50" : ""}`} aria-label="和 echo 打电话"
+        <div className="ec-nav-btn chip ec-navcap">
+        <button type="button" className={`ec-capbtn press ${busy ? "opacity-50" : ""}`} aria-label="和 echo 打电话"
           onClick={() => { if (busy) { toast("echo 还在回复，等这条说完再打"); return; } unlockAudio(); setCalling(true); }}>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
         </button>
-        <Link href="/chat/window" className={`ec-nav-btn chip winbtn press ${busy ? "opacity-50" : ""}`} aria-label="换窗" aria-disabled={busy}
+        <span className="ec-capsep" aria-hidden />
+        <Link href="/chat/window" className={`ec-capbtn ec-capwin press ${busy ? "opacity-50" : ""}`} aria-label="换窗" aria-disabled={busy}
           onClick={(e) => { if (busy) { e.preventDefault(); toast("echo 还在回复，等这条说完再换窗"); } }}>
           <GIcon n="win" s={17} />换窗
         </Link>
+        </div>
         </>
       }
       sub={
@@ -863,7 +868,7 @@ function Chat() {
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
                 {m.text}<span className="text-mute">  看记录</span>
               </button>
-            ) : <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />}
+            ) : <Bubble voiceTextOpen={voiceText.includes(m.id)} m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />}
           </div>
           );
         })}
@@ -930,6 +935,19 @@ function Chat() {
         const menuW = 292, left = Math.max(10, Math.min(menu.mine ? menu.rect.left + menu.rect.width - menuW : menu.rect.left, vw - menuW - 10));
         const acts: [string, string, () => void, string?][] = [
           ["copy", "复制", () => copyMsg(menu.id)],
+          ...(() => {
+            const mm = messages.find((x) => x.id === menu.id);
+            if (!mm || mm.role === "user" || !mm.text || mm.status === "streaming") return [];
+            const out: [string, string, () => void][] = [];
+            if (mm.voice) {
+              out.push(["type", voiceText.includes(mm.id) ? "收起文字" : "转文字", () => setVoiceText((v) => v.includes(mm.id) ? v.filter((x) => x !== mm.id) : [...v, mm.id])]);
+              out.push(["retry", "重做语音", () => void voiceToBar(mm.id, mm.text)]);
+            } else {
+              out.push(["play", speaking === mm.id ? "停止朗读" : "朗读", () => void speak(mm)]);
+              out.push(["mic", "转语音", () => void voiceToBar(mm.id, mm.text)]);
+            }
+            return out;
+          })(),
           ["brain", "记住", () => remember([menu.id])],
           ["heart", "收藏", () => favorite([menu.id])],
           ["select", "多选", () => startSelect(menu.id)],
@@ -1034,8 +1052,8 @@ function Avatar({ mine = false, hidden = false }: { mine?: boolean; hidden?: boo
   const src = mine ? settings.avatarMe : settings.avatarEcho;
   if (src) return <img src={src} alt={mine ? "我" : "echo"} className={`ec-avatar h-9 w-9 shrink-0 self-start rounded-full object-cover ${hidden ? "invisible" : ""}`} />;
   return (
-    <span className={`ec-avatar grid h-9 w-9 shrink-0 place-items-center self-start rounded-full bg-sakura/40 text-rose ${hidden ? "invisible" : ""}`}>
-      <IconStar size={16} />
+    <span data-cssg className={`g ec-avatar ec-avatar-empty grid h-9 w-9 shrink-0 place-items-center self-start rounded-full text-[14px] ${hidden ? "invisible" : ""}`} style={{ "--r": "999px" } as React.CSSProperties}>
+      {mine ? "我" : "e"}
     </span>
   );
 }
@@ -1044,7 +1062,7 @@ function Avatar({ mine = false, hidden = false }: { mine?: boolean; hidden?: boo
 const voicePeaks = new Map<string, number[]>();
 const fallbackPeaks = (id: string) => Array.from({ length: 28 }, (_, i) => 5 + ((id.charCodeAt(i % id.length) * 17 + i * 29) % 15));
 
-function VoiceBar({ m, onRegen, toast, textOpen, onTextToggle }: { m: Msg; onRegen: (m: Msg) => void; toast: (message: string) => void; textOpen: boolean; onTextToggle: () => void }) {
+function VoiceBar({ m, onRegen, toast, textOpen, press }: { m: Msg; onRegen: (m: Msg) => void; toast: (message: string) => void; textOpen: boolean; press: Record<string, unknown> }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [peaks, setPeaks] = useState(() => voicePeaks.get(m.id) || fallbackPeaks(m.id));
@@ -1074,7 +1092,7 @@ function VoiceBar({ m, onRegen, toast, textOpen, onTextToggle }: { m: Msg; onReg
     return () => cancelAnimationFrame(frame);
   }, [playing]);
   if (m.voice?.pending) {
-    return <div className="voice-bar voice-pending mt-1.5" data-onwp>{Array.from({ length: 28 }, (_, i) => <i key={i} style={{ height: `${6 + (i * 7) % 15}px` }} />)}</div>;
+    return <div {...press} data-cssg data-who="ai" className="g bub ec-bubble ai voice-bubble rounded-[22px] rounded-bl-md"><div className="voice-bar voice-pending">{Array.from({ length: 16 }, (_, i) => <i key={i} style={{ height: `${6 + (i * 7) % 15}px` }} />)}</div></div>;
   }
   if (!blob) {
     return (
@@ -1090,20 +1108,23 @@ function VoiceBar({ m, onRegen, toast, textOpen, onTextToggle }: { m: Msg; onReg
     setProgress(0); setPlaying(true);
     void playBlob(blob).catch((e) => toast((e as Error).message || "播放失败")).finally(() => setPlaying(false));
   };
+  const width = Math.max(120, Math.min(260, 120 + Math.round(dur) * 8));
+  const bars = Math.max(10, Math.round((width - 100) / 5));
+  const shown = Array.from({ length: bars }, (_, i) => peaks[Math.floor(i * peaks.length / bars)] || 6);
   return (
-    <div className="voice-wrap mt-1.5" data-onwp>
+    <div {...press} data-cssg data-who="ai" className="g bub ec-bubble ai voice-bubble rounded-[22px] rounded-bl-md" style={{ width }}>
       <div className="voice-bar">
-      <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={toggle} className={`voice-play press ${playing ? "bg-rose text-white" : "bg-sakura/40 text-rose"}`}>
-        {playing ? <IconStop size={13} /> : <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z" /></svg>}
-      </button>
-      <button type="button" aria-label="跳转播放位置" className="voice-peaks" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); seekVoice(((e.clientX - r.left) / r.width) * (dur || 0)); setProgress((e.clientX - r.left) / r.width); }}>
-        {peaks.map((h, i) => (
-          <i key={i} className={`${i / peaks.length < progress ? "played" : ""} ${playing && Math.abs(i / peaks.length - progress) < 0.08 ? "voice-jump" : ""}`} style={{ height: `${h}px`, animationDelay: `${i * 0.04}s` }} />
-        ))}
-      </button>
-      <span className="shrink-0 text-[12px] text-mute">{dur ? fmtDur(dur * 1000) : "语音"}</span>
+        <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={toggle} className="voice-play press">
+          <span className="voice-dot">{playing ? <IconStop size={12} /> : <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z" /></svg>}</span>
+        </button>
+        <button type="button" aria-label="跳转播放位置" className="voice-peaks" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); const f = (e.clientX - r.left) / r.width; if (!playing) toggle(); seekVoice(f * (dur || 0)); setProgress(f); }}>
+          {shown.map((h, i) => (
+            <i key={i} className={`${i / bars < progress ? "played" : ""} ${playing && Math.abs(i / bars - progress) < 0.08 ? "voice-jump" : ""}`} style={{ height: `${h}px`, animationDelay: `${i * 0.04}s` }} />
+          ))}
+        </button>
+        <span className="voice-dur">{dur ? fmtDur(dur * 1000) : "语音"}</span>
       </div>
-      <button type="button" className="voice-transcript press" onClick={onTextToggle}>{textOpen ? "收起原文" : "转文字"}</button>
+      {textOpen && m.text && <div className="voice-text">{m.text}</div>}
     </div>
   );
 }
@@ -1144,7 +1165,7 @@ function ThinkLine({ think, defaultOpen = false, live = false, translate = true 
         ))}
       </div>
       {open && (
-        <div className="thinkbox mt-1.5 max-w-full rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute">
+        <div className="thinkbox -mt-2 max-w-full rounded-xl bg-tile/90 px-3 py-2 text-[13px] leading-[1.6] text-mute">
           <p ref={box} className={`max-w-full whitespace-pre-wrap break-words ${live ? "max-h-40 overflow-y-auto" : ""}`}>{showingZh ? zh : think.text}</p>
           {!live && (tr === "loading" || tr === "done") && (
             <div className="mt-1 flex items-center gap-2 text-[11.5px] opacity-70" data-onwp>
@@ -1221,10 +1242,9 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast, groupFirst }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void; groupFirst: boolean }) {
+function Bubble({ voiceTextOpen, m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast, groupFirst }: { voiceTextOpen: boolean; m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void; groupFirst: boolean }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
-  const [voiceTextOpen, setVoiceTextOpen] = useState(false);
   const hasImages = !!(m.images && m.images.length);
   const press = useLongPress((el) => onMenu(el, m), selecting || m.status === "streaming");
   const thoughts = !mine && m.reasoning?.trim() ? <ThinkLine think={{ text: m.reasoning, tags: [] }} defaultOpen={!quiet} live={m.status === "streaming" && !m.text} translate={translateThink} />
@@ -1282,7 +1302,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, translateS
             ))}
           </div>
         )}
-        {!(!mine && m.voice && !voiceTextOpen) && <div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
+        {!(!mine && m.voice) && <div className={`ec-bubbles${multi ? ` flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}` : ""}`}>
           {parts.map((p, i) => (
             <div
               key={i}
@@ -1300,7 +1320,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, translateS
           ))}
         </div>}
         {mine && <div className="clear-both" />}
-        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} textOpen={voiceTextOpen} onTextToggle={() => setVoiceTextOpen((v) => !v)} />}
+        {!mine && m.voice && <VoiceBar m={m} onRegen={onVoice} toast={toast} textOpen={voiceTextOpen} press={press as unknown as Record<string, unknown>} />}
         {translation && translateShow !== "off" && (
           translateShow === "tap" && !showTranslation ? (
             <button type="button" onClick={() => setShowTranslation(true)} className="mt-1 min-h-11 px-2 text-left text-[13px] text-mute">看翻译</button>
@@ -1311,24 +1331,6 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, translateS
         {m.card && m.card.type !== "translate" && m.status === "done" && <ResultCard card={m.card} />}
         {m.status === "stopped" && <p className="mt-1 pl-2 text-[12px]" data-onwp>已停止生成，写出的字留着</p>}
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
-        {m.status !== "streaming" && (
-          <p className={`ec-time mt-1 flex items-center gap-2 px-2 text-[11px] opacity-80 ${mine ? "justify-end" : ""}`} data-onwp>
-            {!mine && m.text && (
-              <>
-                <button type="button" aria-label={speaking === m.id ? "停止朗读" : "朗读这条"} onClick={() => onSpeak(m)} className="press flex items-center gap-1">
-                  <IconSpeaker size={13} className={speaking === m.id ? "text-rose" : ""} />
-                  {speaking === m.id && <span className="text-rose">朗读中</span>}
-                </button>
-                {m.status === "done" && (
-                  <button type="button" aria-label={m.voice ? "重新生成语音条" : "转成语音条"} onClick={() => onVoice(m)} className="press flex items-center gap-1 text-mute">
-                    <IconMic size={12} />
-                    {m.voice ? "重做语音" : "转语音"}
-                  </button>
-                )}
-              </>
-            )}
-          </p>
-        )}
       </div>
       {mine && <Avatar mine hidden={!groupFirst} />}
     </div>
