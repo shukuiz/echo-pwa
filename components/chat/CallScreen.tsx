@@ -17,7 +17,9 @@ const IDLE_RESET_MS = 20_000; // 一直没人说话就重开录音，免得缓�
 
 const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-export default function CallScreen({ avatar, history, onEnd, toast }: {
+export default function CallScreen({ avatar, history, onEnd, toast, greet = false }: {
+  /** echo 打来的、她刚接起：echo 先开口 */
+  greet?: boolean;
   avatar?: string;
   /** 通话前的聊天（只取文字），让 echo 知道前情 */
   history: CallTurn[];
@@ -131,6 +133,27 @@ export default function CallScreen({ avatar, history, onEnd, toast }: {
     }
   }
 
+  /** echo 先说一句（不算进她的话里） */
+  async function echoSays(prompt: string) {
+    go("thinking");
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let reply = "";
+    try {
+      const input = [...history.slice(-16), { role: "user" as const, text: prompt }];
+      await api.chatStream(input, { call: true, signal: ac.signal, onDelta: (d) => { reply += d; } });
+    } catch { /* 打招呼失败就直接听 */ }
+    reply = stripTr(reply.replace(/\[\[echo:[^\]]*\]\]/g, ""));
+    if (!alive.current || ac.signal.aborted) return;
+    if (reply) {
+      addTurn({ role: "echo", text: reply });
+      try { go("speaking"); await playBlob(await api.speak(reply.slice(0, 600))); } catch { /* 念不出来也继续 */ }
+    }
+    if (!alive.current) return;
+    go("listening");
+    void listen();
+  }
+
   function toggleMute() {
     const next = !mutedRef.current;
     mutedRef.current = next;
@@ -156,7 +179,8 @@ export default function CallScreen({ avatar, history, onEnd, toast }: {
   useEffect(() => {
     unlockAudio();
     startedAt.current = Date.now();
-    void listen();
+    if (greet) void echoSays("（你刚给她打了电话，她接起来了。先开口，像打电话那样自然地打个招呼。）");
+    else void listen();
     const t = setInterval(() => setSecs(Math.floor((Date.now() - startedAt.current) / 1000)), 500);
     return () => { clearInterval(t); alive.current = false; abortRef.current?.abort(); recRef.current?.cancel(); stopPlaying(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -197,6 +221,35 @@ export default function CallScreen({ avatar, history, onEnd, toast }: {
         <button type="button" className={`ec-call-btn ${captions ? "on" : ""}`} onClick={() => setCaptions((v) => !v)} aria-pressed={captions}>
           <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M7 11h4M13 11h4M7 15h7" /></svg>
           <span>字幕</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** echo 打来的电话：响 30 秒没接就算未接 */
+export function IncomingCall({ avatar, onAccept, onDecline }: { avatar?: string; onAccept: () => void; onDecline: (missed: boolean) => void }) {
+  useEffect(() => {
+    const t = setTimeout(() => onDecline(true), 30_000);
+    try { navigator.vibrate?.([400, 300, 400]); } catch {}
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className="ec-call" role="dialog" aria-label="echo 来电">
+      <div className="ec-call-top"><b>echo</b><span className="ec-call-time">来电…</span></div>
+      <div className="ec-call-orb is-ringing">
+        <span className="ec-call-halo" /><span className="ec-call-halo2" />
+        {avatar ? <img src={avatar} alt="echo" className="ec-call-avatar" /> : <span className="ec-call-avatar ec-call-avatar-empty">e</span>}
+      </div>
+      <div className="ec-call-acts ec-call-acts-in">
+        <button type="button" className="ec-call-btn hang" onClick={() => onDecline(false)} aria-label="拒绝">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 9c-3.2 0-6.2.9-8.6 2.6-.6.4-.8 1.2-.5 1.9l1 2c.3.6 1 .9 1.7.7l2.6-.9c.6-.2 1-.8 1-1.4v-1.6c1.8-.5 3.8-.5 5.6 0v1.6c0 .6.4 1.2 1 1.4l2.6.9c.7.2 1.4-.1 1.7-.7l1-2c.3-.7.1-1.5-.5-1.9C18.2 9.9 15.2 9 12 9z" /></svg>
+          <span>拒绝</span>
+        </button>
+        <button type="button" className="ec-call-btn pick" onClick={() => { unlockAudio(); onAccept(); }} aria-label="接听">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
+          <span>接听</span>
         </button>
       </div>
     </div>

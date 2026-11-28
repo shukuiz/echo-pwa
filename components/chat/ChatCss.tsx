@@ -73,6 +73,21 @@ export default function ChatCss() {
       .ec-page .voice-pending { gap:2px; padding-left:1px; opacity:.7; animation:echo-voice-breathe 1.4s ease-in-out infinite; }
       @keyframes echo-voice-jump { to { transform:scaleY(1.18); } }
       @keyframes echo-voice-breathe { 50% { opacity:.4; } }
+      .ec-callrow { display:flex; padding:0 44px; }
+      .ec-callrow.me { justify-content:flex-end; }
+      .ec-callcard { display:flex; align-items:center; gap:10px; min-height:56px; padding:10px 14px; border-radius:20px; text-align:left; min-width:200px; }
+      .ec-ci { width:34px; height:34px; border-radius:50%; display:grid; place-items:center; flex:none; }
+      .ec-ci.in { background:color-mix(in srgb, var(--hl, #c95b84) 18%, white); color:var(--hl, #c95b84); }
+      .ec-ci.out { background:rgba(255,255,255,.7); color:#3d393b; }
+      .ec-ci.miss { background:#fde3e4; color:#e5484d; }
+      .ec-cc { display:flex; flex-direction:column; line-height:1.3; }
+      .ec-cc b { font-size:15px; font-weight:600; }
+      .ec-cc small { font-size:12px; opacity:.75; }
+      .ec-cc small.miss { color:#e5484d; opacity:1; }
+      .ec-callback { margin-left:auto; padding-left:12px; font-size:13px; color:var(--hl, #c95b84); }
+      .ec-call-acts-in { gap:90px; }
+      .ec-call-btn.pick svg { width:28px; height:28px; padding:18px; background:#30a46c; color:#fff; }
+      .ec-call-orb.is-ringing .ec-call-halo { animation-duration:1.2s; }
       .ec-callpill { display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:0 16px; border-radius:22px; background:var(--tile,#fff); font-size:15px; box-shadow:0 1px 0 rgba(0,0,0,.04); }
       .ec-calllog { max-height:60vh; overflow-y:auto; padding:0 18px 18px; display:flex; flex-direction:column; gap:10px; font-size:15px; line-height:22px; }
       .ec-calllog b { display:block; font-size:12px; color:var(--g-mute,#888); font-weight:500; }

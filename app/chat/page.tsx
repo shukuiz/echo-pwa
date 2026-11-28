@@ -18,7 +18,7 @@ import { createMemory } from "@/lib/memory";
 import { GIcon } from "@/components/glass/Wall";
 import { blobDuration, cacheVoice, getVoiceBlob, playBlob, seekVoice, startRecording, stopPlaying, unlockAudio, voicePlaybackState, type Recorder } from "@/lib/wav";
 import { renderChatShot } from "@/lib/shot";
-import CallScreen from "@/components/chat/CallScreen";
+import CallScreen, { IncomingCall } from "@/components/chat/CallScreen";
 import { inlineTr, splitTr, stripTr, type EchoAction } from "@/lib/echo-actions";
 
 type Confirm = { action: string; onOk: () => void; onNo: () => void };
@@ -147,7 +147,8 @@ function Chat() {
   const [transcribing, setTranscribing] = useState(false);
   const [speaking, setSpeaking] = useState<string | null>(null);
   // 打电话：全屏通话页；callLog = 正在看的那次通话记录
-  const [calling, setCalling] = useState(false);
+  const [calling, setCalling] = useState<false | "in" | "out">(false);
+  const [ringing, setRinging] = useState(false);
   const [callLog, setCallLog] = useState<Msg["call"] | null>(null);
   // 语音气泡里展开了文字的那些消息（长按「转文字」）
   const [voiceText, setVoiceText] = useState<string[]>([]);
@@ -372,6 +373,14 @@ function Chat() {
     }
   }
 
+  /** 通话记录：聊天里留一张卡片（谁打给谁、多久、未接） */
+  function logCall(c: { dir: "in" | "out"; dur: number; turns: { role: "user" | "echo"; text: string }[]; missed?: boolean }) {
+    const id = uid();
+    const text = c.missed ? "echo 打来的电话 · 未接" : `通话 ${Math.floor(c.dur / 60)}:${String(c.dur % 60).padStart(2, "0")}`;
+    set("messages", (ms) => [...ms, { id, role: c.dir === "out" ? "user" : "echo", text, call: { dur: c.dur, turns: c.turns, dir: c.dir, missed: c.missed }, at: Date.now(), status: "done" }]);
+    api.saveCallLog({ id, text, ...c }).catch(() => {});
+  }
+
   /** 多选截图：按聊天里的先后顺序截勾选的那几条 */
   function shotFromIds(ids: string[]) {
     const set_ = new Set(ids);
@@ -439,6 +448,8 @@ function Chat() {
             toast(`记到记忆本了：${a.title}`);
           })
           .catch(() => toast("这条没记上，等下再试"));
+      } else if (a.kind === "call") {
+        if (!calling) setRinging(true);
       } else if (a.kind === "file") {
         const id = uid();
         set("files", (fs) => [...fs, { id, kind: "preset" as const, name: a.name, content: a.content, at: Date.now(), via: "echo" }]);
@@ -791,7 +802,7 @@ function Chat() {
         <>
         <div className="ec-nav-btn chip ec-navcap">
         <button type="button" className={`ec-capbtn press ${busy ? "opacity-50" : ""}`} aria-label="和 echo 打电话"
-          onClick={() => { if (busy) { toast("echo 还在回复，等这条说完再打"); return; } unlockAudio(); setCalling(true); }}>
+          onClick={() => { if (busy) { toast("echo 还在回复，等这条说完再打"); return; } unlockAudio(); setCalling("out"); }}>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
         </button>
         <span className="ec-capsep" aria-hidden />
@@ -865,10 +876,18 @@ function Chat() {
             )}
             {showGroupTime && <div className="chat-group-time" aria-label="消息时间">{new Date(m.at).toDateString() === new Date(prev!.at).toDateString() ? fmtTime(m.at) : `${new Date(m.at).getMonth() + 1}月${new Date(m.at).getDate()}日 ${fmtTime(m.at)}`}</div>}
             {m.call ? (
-              <button type="button" className="ec-callpill press" onClick={() => setCallLog(m.call!)} aria-label="看通话记录">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.4a12 12 0 0 0 6.3 6.3l1.4-2 4.2 1.4v2.6a1.9 1.9 0 0 1-2 1.9A16.6 16.6 0 0 1 4.7 5.5a1.9 1.9 0 0 1 1.9-2z" /></svg>
-                {m.text}<span className="text-mute">  看记录</span>
-              </button>
+              <div className={`ec-callrow ${m.call.dir === "out" ? "me" : ""}`}>
+                <button type="button" data-cssg className="g ec-callcard press" onClick={() => { if (m.call!.missed) { unlockAudio(); setCalling("out"); } else setCallLog(m.call!); }} aria-label={m.call.missed ? "回拨" : "看通话记录"}>
+                  <span className={`ec-ci ${m.call.missed ? "miss" : m.call.dir === "out" ? "out" : "in"}`}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{m.call.dir === "out" ? <path d="M7 17L17 7M9 7h8v8" /> : <path d="M17 7L7 17M7 9v8h8" />}</svg>
+                  </span>
+                  <span className="ec-cc">
+                    <b>{m.call.dir === "out" ? "你打给 echo" : "echo 打来的电话"}</b>
+                    <small className={m.call.missed ? "miss" : ""}>{m.call.missed ? "未接" : `${m.text} · 点开看记录`}</small>
+                  </span>
+                  {m.call.missed && <span className="ec-callback">回拨</span>}
+                </button>
+              </div>
             ) : <Bubble voiceTextOpen={voiceText.includes(m.id)} m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />}
           </div>
           );
@@ -974,18 +993,25 @@ function Chat() {
         );
       })()}
 
+      {ringing && (
+        <IncomingCall
+          avatar={settings.avatarEcho}
+          onAccept={() => { setRinging(false); setCalling("in"); }}
+          onDecline={(missed) => { setRinging(false); logCall({ dir: "in", dur: 0, turns: [], missed: true }); if (!missed) toast("挂掉了，它会知道你在忙"); }}
+        />
+      )}
+
       {calling && (
         <CallScreen
+          greet={calling === "in"}
           avatar={settings.avatarEcho}
           history={messages.filter((m) => m.text && !m.call).slice(-16).map((m) => ({ role: m.role === "user" ? "user" : "echo", text: m.text }))}
           toast={toast}
           onEnd={({ dur, turns }) => {
+            const dir = calling === "in" ? "in" : "out";
             setCalling(false);
-            if (!turns.length) return;
-            const id = uid();
-            const text = `通话 ${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, "0")}`;
-            set("messages", (ms) => [...ms, { id, role: "echo", text, call: { dur, turns }, at: Date.now(), status: "done" }]);
-            api.saveCallLog({ id, text, dur, turns }).catch(() => {});
+            if (!turns.length && dir === "out") return;
+            logCall({ dir, dur, turns });
           }}
         />
       )}

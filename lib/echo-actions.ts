@@ -4,13 +4,14 @@ export type EchoAction =
   | { kind: "voice" }
   | { kind: "shot"; who: "mine" | "echo"; count?: number }
   | { kind: "memory"; memKind: "scene" | "event" | "preference" | "persona"; title: string; text: string }
-  | { kind: "file"; name: string; content: string };
+  | { kind: "file"; name: string; content: string }
+  | { kind: "call" };
 
 const MEM_KINDS = ["scene", "event", "preference", "persona"] as const;
 type MemKind = (typeof MEM_KINDS)[number];
 const isMemKind = (v: string): v is MemKind => (MEM_KINDS as readonly string[]).includes(v);
 
-const MARK = /^[ \t]*\[\[echo:(voice|shot|memory|file)(?::([^\]]*))?\]\][ \t]*$/;
+const MARK = /^[ \t]*\[\[echo:(voice|shot|memory|file|call)(?::([^\]]*))?\]\][ \t]*$/;
 
 /** 解析回复里的小动作。没有暗号时原样返回，零副作用 */
 export function parseEchoActions(raw: string): { text: string; actions: EchoAction[] } {
@@ -32,6 +33,10 @@ export function parseEchoActions(raw: string): { text: string; actions: EchoActi
 
     if (kind === "voice") {
       actions.push({ kind: "voice" });
+      continue;
+    }
+    if (kind === "call") {
+      if (!actions.some((a) => a.kind === "call")) actions.push({ kind: "call" });
       continue;
     }
     if (kind === "shot") {
