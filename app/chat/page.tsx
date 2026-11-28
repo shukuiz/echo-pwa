@@ -860,7 +860,12 @@ function Chat() {
         {messages.length === 0 && (
           <p className="ec-empty pt-20 text-center" data-onwp>和 echo 说点什么吧 ( ˘ᵕ˘ )</p>
         )}
-        {messages.map((m) => (
+        {messages.map((m, index) => {
+          const prev = messages[index - 1];
+          const sameGroup = !!prev && prev.role === m.role && m.at - prev.at <= 5 * 60 * 1000;
+          const groupFirst = !sameGroup;
+          const showGroupTime = groupFirst && !!prev && m.at - prev.at > 5 * 60 * 1000;
+          return (
           <div key={m.id} id={"msg-" + m.id} data-who={m.role === "user" ? "me" : "ai"} data-status={m.status ?? "done"}
             className={`msgrow ec-msg ${sel ? "selecting" : ""} ${sel?.includes(m.id) ? "picked" : ""}`}
             onClick={sel && selectable(m) ? () => toggle(m.id) : undefined}>
@@ -869,9 +874,11 @@ function Chat() {
                 <GIcon n="check" s={14} w={3} />
               </span>
             )}
-            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} />
+            {showGroupTime && <div className="chat-group-time" aria-label="消息时间">{new Date(m.at).toDateString() === new Date(prev!.at).toDateString() ? fmtTime(m.at) : `${new Date(m.at).getMonth() + 1}月${new Date(m.at).getDate()}日 ${fmtTime(m.at)}`}</div>}
+            <Bubble m={m} quiet={quiet} latest={m.id === messages.at(-1)?.id} selecting={!!sel} split={!!settings.splitBubbles} translateThink={settings.thinkTranslate !== false} translateShow={settings.translateShow ?? "below"} onMenu={openMenu} onAction={(a) => onErrorAction(m, a)} busy={busy} onSpeak={speak} speaking={speaking} onVoice={(mm) => void voiceToBar(mm.id, mm.text)} toast={toast} groupFirst={groupFirst} />
           </div>
-        ))}
+          );
+        })}
         {working && (
           <div className="flex items-center gap-2 pt-2 animate-rise">
             <Avatar />
@@ -1005,13 +1012,12 @@ function Chat() {
   );
 }
 
-function Avatar({ mine = false }: { mine?: boolean }) {
+function Avatar({ mine = false, hidden = false }: { mine?: boolean; hidden?: boolean }) {
   const { settings } = useStore();
   const src = mine ? settings.avatarMe : settings.avatarEcho;
-  if (src) return <img src={src} alt={mine ? "我" : "echo"} className="h-8 w-8 shrink-0 self-end rounded-full object-cover" />;
-  if (mine) return null; // 我没设头像就不占位，气泡保持靠右紧凑
+  if (src) return <img src={src} alt={mine ? "我" : "echo"} className={`ec-avatar h-9 w-9 shrink-0 self-start rounded-full object-cover ${hidden ? "invisible" : ""}`} />;
   return (
-    <span className="ec-avatar grid h-8 w-8 shrink-0 place-items-center self-end rounded-full bg-sakura/40 text-rose">
+    <span className={`ec-avatar grid h-9 w-9 shrink-0 place-items-center self-start rounded-full bg-sakura/40 text-rose ${hidden ? "invisible" : ""}`}>
       <IconStar size={16} />
     </span>
   );
@@ -1171,7 +1177,7 @@ function ErrorCard({ m, onAction, busy }: { m: Msg; onAction: (a: ReplyAction) =
   );
 }
 
-function Bubble({ m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void }) {
+function Bubble({ m, quiet, latest, selecting, split, translateThink, translateShow, onMenu, onAction, busy, onSpeak, speaking, onVoice, toast, groupFirst }: { m: Msg; quiet: boolean; latest: boolean; selecting: boolean; split: boolean; translateThink: boolean; translateShow: "below" | "tap" | "off"; onMenu: (el: HTMLElement, m: Msg) => void; onAction: (a: ReplyAction) => void; busy: boolean; onSpeak: (m: Msg) => void; speaking: string | null; onVoice: (m: Msg) => void; toast: (message: string) => void; groupFirst: boolean }) {
   const mine = m.role === "user";
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!(m.images && m.images.length);
@@ -1209,7 +1215,7 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, translateS
     <div className="pt-2 animate-rise">
     {thoughts}
     <div className={`flex items-end gap-2 ${mine ? "justify-end" : ""}`}>
-      {!mine && <Avatar />}
+      {!mine && <Avatar hidden={!groupFirst} />}
       <div className={`max-w-[80%] ${m.card && m.status === "done" ? "w-[80%]" : ""}`}>
         {hasImages && (
           <div className={`mb-1.5 flex flex-wrap gap-1.5 ${mine ? "justify-end" : ""}`}>
@@ -1262,7 +1268,6 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, translateS
         {m.note && <p className="mt-1 pl-2 text-[12px]" data-onwp>{m.note}</p>}
         {m.status !== "streaming" && (
           <p className={`ec-time mt-1 flex items-center gap-2 px-2 text-[11px] opacity-80 ${mine ? "justify-end" : ""}`} data-onwp>
-            <span>{fmtTime(m.at)}</span>
             {!mine && m.text && (
               <>
                 <button type="button" aria-label={speaking === m.id ? "停止朗读" : "朗读这条"} onClick={() => onSpeak(m)} className="press flex items-center gap-1">
@@ -1279,8 +1284,8 @@ function Bubble({ m, quiet, latest, selecting, split, translateThink, translateS
             )}
           </p>
         )}
-        {mine && <Avatar mine />}
       </div>
+      {mine && <Avatar mine hidden={!groupFirst} />}
     </div>
     {m.status === "error" && <div className="mt-1.5"><ErrorCard m={m} onAction={onAction} busy={busy} /></div>}
     {zoom && (

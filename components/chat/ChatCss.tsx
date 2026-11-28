@@ -37,10 +37,17 @@ export default function ChatCss() {
       }
       .ec-page .ec-bubbles { row-gap: var(--ec-bubble-gap-in, 6px); }
       .ec-page .ec-avatar {
-        width: var(--ec-avatar-size, 32px);
-        height: var(--ec-avatar-size, 32px);
+        width: var(--ec-avatar-size, 36px);
+        height: var(--ec-avatar-size, 36px);
         border-radius: calc(var(--ec-avatar-r, 9999) * 1px);
         color: var(--ec-accent, var(--hl, #db6c94));
+      }
+      .ec-page .chat-group-time {
+        margin: 10px 0 2px;
+        text-align: center;
+        color: var(--ec-mute, var(--g-mute, #aaa));
+        font-size: 12px;
+        line-height: 18px;
       }
       .ec-page .ec-input { color: var(--ec-ink, var(--g-ink, #fff)); }
       .ec-page .ec-input::placeholder,
